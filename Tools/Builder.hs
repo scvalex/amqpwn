@@ -1,12 +1,15 @@
+import Data.Char
+import qualified Data.List as L
+import qualified Data.Map as M
+import Data.Maybe
+
+import System.Environment ( getArgs )
+
+import Text.Printf ( printf )
+
 import Text.XML.Light
 import Text.XML.Light.Input
 import Text.XML.Light.Proc
-
-import qualified Data.Map as M
-import qualified Data.List as L
-
-import Data.Char
-import Data.Maybe
 
 
 data Class = Class String Int [Method] [Field]
@@ -23,7 +26,8 @@ data Field = TypeField String String   -- ^fieldName, fieldType
 
 main :: IO ()
 main = do
-  spec <- readFile "amqp0-8.xml"
+  [ specFn, tmplFn ] <- getArgs
+  spec <- readFile specFn
   let parsed = parseXML spec
   let !(Elem e) = parsed !! 2
 
@@ -37,10 +41,10 @@ main = do
   let classes = map readClass $ findChildren (unqual "class") e :: [Class]
 
   -- generate data declaration
-  let dataDecl = "data MethodPayload = \n" ++
-                 (concat $ L.intersperse "\t|" $
-                  concatMap (writeDataDeclForClass domainMap) classes) ++
-                 "\n\tderiving Show"
+  let dataDecl = unlines [ "data MethodPayload = \n"
+                         , concat $ L.intersperse "\t|" $
+                           concatMap (writeDataDeclForClass domainMap) classes
+                         , "\tderiving Show" ]
 
   -- generate binary instances for data-type
   let binaryGetInst = concat $ map ("\t"++) $
@@ -60,69 +64,25 @@ main = do
   let contentHeadersClassIDs =
           concatMap (writeContentHeaderClassIDsForClass domainMap) classes
 
-  writeFile "Generated.hs"
-                ( "module Network.AMQP.Generated where\n\n" ++
-                  "import Network.AMQP.Types\n" ++
-                  "import Data.Maybe\n" ++
-                  "import Data.Binary\n" ++
-                  "import Data.Binary.Get\n" ++
-                  "import Data.Binary.Put\n" ++
-                  "import Data.Bits\n\n" ++
-
-                  contentHeadersGetInst ++ "\n" ++
-                  contentHeadersPutInst ++ "\n" ++
-                  contentHeadersClassIDs ++ "\n" ++
-
-                  "data ContentHeaderProperties = \n\t" ++
-                  contentHeaders ++
-                  "\n\tderiving Show\n\n" ++
-
-                  "--Bits need special handling because AMQP requires contiguous bits to be packed into a Word8\n" ++
-                  "-- | Packs up to 8 bits into a Word8\n" ++
-                  "putBits :: [Bit] -> Put\n" ++
-                  "putBits xs = putWord8 $ putBits' 0 xs\n" ++
-                  "putBits' _ [] = 0\n" ++
-                  "putBits' offset (x:xs) = (shiftL (toInt x) offset) .|. (putBits' (offset+1) xs)\n" ++
-                  "    where toInt True = 1\n" ++
-                  "          toInt False = 0\n" ++
-
-                  "getBits num = getWord8 >>= \\x -> return $ getBits' num 0 x\n" ++
-                  "getBits' 0 offset _= []\n" ++
-                  "getBits' num offset x = ((x .&. (2^offset)) /= 0) : (getBits' (num-1) (offset+1) x)\n" ++
-
-                  "-- | Packs up to 15 Bits into a Word16 (=Property Flags) \n" ++
-                  "putPropBits :: [Bit] -> Put\n" ++
-                  "putPropBits xs = putWord16be $ (putPropBits' 0 xs) \n" ++
-                  "putPropBits' _ [] = 0\n" ++
-                  "putPropBits' offset (x:xs) = (shiftL (toInt x) (15-offset)) .|. (putPropBits' (offset+1) xs)\n" ++
-                  "    where toInt True = 1\n" ++
-                  "          toInt False = 0\n" ++
-
-                  "getPropBits num = getWord16be >>= \\x -> return $ getPropBits' num 0  x \n" ++
-                  "getPropBits' 0 offset _= []\n" ++
-                  "getPropBits' num offset x = ((x .&. (2^(15-offset))) /= 0) : (getPropBits' (num-1) (offset+1) x)\n" ++
-
-                  "condGet False = return Nothing\n" ++
-                  "condGet True = get >>= \\x -> return $ Just x\n\n" ++
-
-                  "condPut (Just x) = put x\n" ++
-                  "condPut _ = return ()\n\n" ++
-
-                  "instance Binary MethodPayload where\n" ++
-
-                  -- put instances
-                  binaryPutInst ++
-
-                  -- get instances
-                  "\tget = do\n" ++
-                  "\t\tclassID <- getWord16be\n" ++
-                  "\t\tmethodID <- getWord16be\n" ++
-                  "\t\tcase (classID, methodID) of\n" ++
-                  binaryGetInst ++
-
-                  -- data declaration
-                  dataDecl
-                )
+  putStrLn =<< readFile tmplFn
+  putStrLn $ unlines [ contentHeadersGetInst
+                     , contentHeadersPutInst
+                     , contentHeadersClassIDs
+                     , "data ContentHeaderProperties ="
+                     , "\t" ++ contentHeaders
+                     , "\tderiving Show"
+                     , ""
+                     , "instance Binary MethodPayload where"
+                     , binaryPutInst -- put instances
+                     -- get instances
+                     , "\tget = do"
+                     , "\t\tclassID <- getWord16be"
+                     , "\t\tmethodID <- getWord16be"
+                     , "\t\tcase (classID, methodID) of"
+                     , binaryGetInst
+                     -- data declaration
+                     , dataDecl
+                     ]
 
 fieldType domainMap (TypeField _ x) = x
 fieldType domainMap (DomainField _ domain) =
