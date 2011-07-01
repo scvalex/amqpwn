@@ -2,3 +2,5 @@ dist/
 *.o
 *.hi
 testing/
+Network/AMQP/Generated.hs
+
