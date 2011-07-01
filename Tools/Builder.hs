@@ -24,6 +24,8 @@ data Field = TypeField String String   -- ^fieldName, fieldType
            | DomainField String String -- ^fieldName, domainName
              deriving (Show)
 
+type DomainMap = M.Map String String
+
 main :: IO ()
 main = do
   [ specFn, tmplFn ] <- getArgs
@@ -62,7 +64,7 @@ main = do
   let contentHeadersPutInst =
           concatMap (writeContentHeaderPutInstForClass domainMap) classes
   let contentHeadersClassIDs =
-          concatMap (writeContentHeaderClassIDsForClass domainMap) classes
+          concatMap writeContentHeaderClassIDsForClass classes
 
   putStrLn =<< readFile tmplFn
   putStrLn $ unlines [ contentHeadersGetInst
@@ -113,11 +115,11 @@ fixFieldName s = map f s
 
 ---- data declaration ----
 
-writeDataDeclForClass :: M.Map String String -> Class -> [String]
+writeDataDeclForClass :: DomainMap -> Class -> [String]
 writeDataDeclForClass domainMap (Class nam index methods _) =
     map ("\n\t"++) $ map (writeDataDeclForMethod domainMap nam) methods
 
-writeDataDeclForMethod :: M.Map String String -> String -> Method -> String
+writeDataDeclForMethod :: DomainMap -> String -> Method -> String
 writeDataDeclForMethod domainMap className (Method nam index fields) =
     let fullName = (fixClassName className) ++ "_"++(fixMethodName nam)
     in  --data type declaration
@@ -125,6 +127,7 @@ writeDataDeclForMethod domainMap className (Method nam index fields) =
       --binary instances
       --(writeBinaryInstance fullName fields)
 
+writeTypeDecl :: DomainMap -> String -> [Field] -> String
 writeTypeDecl domainMap fullName fields =
     fullName ++ "\n\t\t" ++
     (concat $ L.intersperse "\n\t\t" $ map writeF fields) ++ "\n"
@@ -137,17 +140,17 @@ writeTypeDecl domainMap fullName fields =
 
 ---- binary get instance ----
 
-writeBinaryGetInstForClass :: M.Map String String -> Class -> [String]
+writeBinaryGetInstForClass :: DomainMap -> Class -> [String]
 writeBinaryGetInstForClass domainMap (Class nam index methods _) =
     map (writeBinaryGetInstForMethod domainMap nam index) methods
 
-writeBinaryGetInstForMethod :: M.Map String String -> String -> Int -> Method
-                            -> String
+writeBinaryGetInstForMethod :: DomainMap -> String -> Int -> Method -> String
 writeBinaryGetInstForMethod domainMap className classIndex (Method nam index fields) =
     let fullName = (fixClassName className) ++ "_"++(fixMethodName nam)
     in --binary instances
       "\t" ++ (writeBinaryGetInstance domainMap fullName classIndex index fields)
 
+writeBinaryGetInstance :: DomainMap -> String -> Int -> Int -> [Field] -> String
 writeBinaryGetInstance domainMap fullName classIndex methodIndex fields =
     "\t(" ++ (show classIndex) ++ "," ++ (show methodIndex) ++ ") -> " ++
     getDef ++ "\n"
@@ -180,19 +183,19 @@ writeBinaryGetInstance domainMap fullName classIndex methodIndex fields =
 
 ---- binary put instance ----
 
-writeBinaryPutInstForClass :: M.Map String String -> Class -> [String]
+writeBinaryPutInstForClass :: DomainMap -> Class -> [String]
 writeBinaryPutInstForClass domainMap (Class nam index methods _) =
     map (writeBinaryPutInstForMethod domainMap nam index) methods
 
-writeBinaryPutInstForMethod :: M.Map String String -> String -> Int -> Method 
-                            -> String
+writeBinaryPutInstForMethod :: DomainMap -> String -> Int -> Method -> String
 writeBinaryPutInstForMethod domainMap className classIndex (Method nam index fields) =
     let fullName = (fixClassName className) ++ "_" ++ (fixMethodName nam)
     in  --binary instances
       (writeBinaryPutInstance domainMap fullName classIndex index fields)
 
+writeBinaryPutInstance :: DomainMap -> String -> Int -> Int -> [Field] -> String
 writeBinaryPutInstance domainMap fullName classIndex methodIndex fields =
-    putDef++"\n"
+    putDef ++ "\n"
         where
           manyLetters = map (:[]) ['a'..'z']
 
@@ -225,6 +228,7 @@ writeContentHeaderForClass domainMap (Class nam index methods fields) =
     let fullName = "CH"++(fixClassName nam)
     in  (writeContentHeaderDecl domainMap fullName fields)
 
+writeContentHeaderDecl :: DomainMap -> String -> [Field] -> String
 writeContentHeaderDecl domainMap fullName fields =
     fullName ++ "\n\t\t" ++ (concat $ L.intersperse "\n\t\t" $
                              map writeF fields) ++ "\n"
@@ -244,6 +248,7 @@ writeContentHeaderGetInstForClass domainMap (Class nam index methods fields) =
     in --binary instances
       (writeContentHeaderGetInstance domainMap fullName index fields)
 
+writeContentHeaderGetInstance :: DomainMap -> String -> Int -> [Field] -> String
 writeContentHeaderGetInstance domainMap fullName classIndex fields =
     "getContentHeaderProperties " ++ (show classIndex) ++ " = "++getDef++"\n"
         where
@@ -270,6 +275,7 @@ writeContentHeaderPutInstForClass domainMap (Class nam index methods fields) =
     in --binary instances
       (writeContentHeaderPutInstance domainMap fullName index fields)
 
+writeContentHeaderPutInstance :: DomainMap -> String -> Int -> [Field] -> String
 writeContentHeaderPutInstance domainMap fullName classIndex fields =
     "putContentHeaderProperties " ++ putDef ++ "\n"
         where
@@ -291,13 +297,14 @@ writeContentHeaderPutInstance domainMap fullName classIndex fields =
                              usedLetters) ++ "] " ++ putStmt
 
 ---- contentheader class ids -----
-writeContentHeaderClassIDsForClass :: M.Map String String -> Class -> String
-writeContentHeaderClassIDsForClass domainMap (Class nam index methods fields) =
-    let fullName = "CH"++(fixClassName nam)
+writeContentHeaderClassIDsForClass :: Class -> String
+writeContentHeaderClassIDsForClass (Class nam index methods fields) =
+    let fullName = "CH" ++ (fixClassName nam)
     in --binary instances
-      (writeContentHeaderClassIDsInstance domainMap fullName index fields)
+      (writeContentHeaderClassIDsInstance fullName index fields)
 
-writeContentHeaderClassIDsInstance domainMap fullName classIndex fields =
+writeContentHeaderClassIDsInstance :: String -> Int -> [Field] -> String
+writeContentHeaderClassIDsInstance fullName classIndex fields =
     "getClassIDOf (" ++ fullName ++
     (concat $ replicate (length fields) " _") ++ ") = " ++
     (show classIndex) ++ "\n"
