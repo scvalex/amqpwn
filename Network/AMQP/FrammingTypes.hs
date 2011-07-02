@@ -30,14 +30,9 @@ genContentHeaderProperties domainMap classes =
                   (map mkConstr classes) [mkName "Show"]]
         where
           mkConstr (Class nam index _ fields) =
-              NormalC (chClassName nam) (map mkField fields)
-          mkField (TypeField _ typ) =
-              (NotStrict, AppT (ConT $ mkName "Maybe")
-                               (ConT $ mkName $ translateType typ))
-          mkField df@(DomainField _ _) =
-              (NotStrict, AppT (ConT $ mkName "Maybe")
-                               (ConT $ mkName $ translateType
-                                     $ fieldType domainMap df))
+              NormalC (chClassName nam)
+                      (map (mkField domainMap maybeF) fields)
+          maybeF = AppT (ConT $ mkName "Maybe")
 
 genClassIDFuns :: (Monad m) => [Class] -> m [Dec]
 genClassIDFuns classes =
@@ -58,12 +53,14 @@ genMethodPayload domainMap classes =
           mkMethodConstr clsNam (Method nam _ fields) =
               let fullName = mkName $ printf "%s_%s" (fixClassName clsNam)
                                                      (fixMethodName nam)
-              in NormalC fullName (map mkField fields)
-          mkField (TypeField _ typ) =
-              (NotStrict, ConT $ mkName $ translateType typ)
-          mkField df@(DomainField _ _) =
-              (NotStrict, ConT $ mkName $ translateType
-                              $ fieldType domainMap df)
+              in NormalC fullName (map (mkField domainMap id) fields)
+
+mkField :: DomainMap -> (Type -> Type) -> Field -> (Strict, Type)
+mkField _ f (TypeField _ typ) =
+    (NotStrict, f $ ConT $ mkName $ translateType typ)
+mkField domainMap f df@(DomainField _ _) =
+    (NotStrict, f $ ConT $ mkName $ translateType
+                         $ fieldType domainMap df)
 
 chClassName :: String -> Name
 chClassName name = mkName $ "CH" ++ (fixClassName name)
