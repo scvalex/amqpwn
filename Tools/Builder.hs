@@ -37,10 +37,6 @@ main = do
                       concatMap (writeBinaryPutInstForClass domainMap)
                       classes
 
-  -- generate content types
-  let contentHeadersPutInst =
-          concatMap (writeContentHeaderPutInstForClass domainMap) classes
-
   putStrLn "module Network.AMQP.FramingData where\n\
            \\n\
            \import Network.AMQP.FramingTypes\n\
@@ -50,8 +46,7 @@ main = do
                      , printf "classes = %s" (listShow classes)
                      , "domainMap :: DomainMap"
                      , printf "domainMap = %s" (show domainMap) ]
-  {-putStrLn $ unlines [ contentHeadersPutInst
-                     , "instance Binary MethodPayload where"
+  {-putStrLn $ unlines [ "instance Binary MethodPayload where"
                      , binaryPutInst -- put instances
                      -- get instances
                      , "\tget = do"
@@ -149,35 +144,6 @@ writeBinaryPutInstance domainMap fullName classIndex methodIndex fields =
               in "put " ++ wrap pattern ++" = " ++
                  "putWord16be " ++ (show classIndex) ++ " >> putWord16be " ++
                  (show methodIndex) ++ putStmt
-
----- contentheader put instance ----
-
-writeContentHeaderPutInstForClass :: M.Map String String -> Class -> String
-writeContentHeaderPutInstForClass domainMap (Class nam index methods fields) =
-    let fullName = "CH"++ (fixClassName nam)
-    in --binary instances
-      (writeContentHeaderPutInstance domainMap fullName index fields)
-
-writeContentHeaderPutInstance :: DomainMap -> String -> Int -> [Field] -> String
-writeContentHeaderPutInstance domainMap fullName classIndex fields =
-    "putContentHeaderProperties " ++ putDef ++ "\n"
-        where
-          manyLetters = map (:[]) ['a'..'z']
-          usedLetters = take (length fields) manyLetters
-
-          showBlob x =  " >> condPut "++x
-
-          putStmt = concatMap showBlob usedLetters
-
-          putDef =
-              let wrap = if (length fields) /= 0 then ("("++) . (++")") else id
-                  pattern = fullName ++
-                            concatMap (' ':) (take (length fields)
-                                                   manyLetters)
-              in wrap pattern ++ " = " ++
-                     "putPropBits " ++ "[" ++
-                     (concat $ L.intersperse "," $ map ("isJust "++)
-                             usedLetters) ++ "] " ++ putStmt
 
 ---- contentheader class ids -----
 readDomain d =

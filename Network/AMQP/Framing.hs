@@ -8,9 +8,8 @@ import Network.AMQP.FramingData
 import Network.AMQP.FramingTypes
 import Network.AMQP.Types
 
-import Data.Binary
-import Data.Binary.Get
-import Data.Binary.Put
+import Data.Binary.Get ( Get, getWord8 )
+import Data.Binary.Put ( Put, putWord8 )
 import Data.Bits
 import Data.Maybe
 
@@ -32,19 +31,6 @@ getBits' 0 offset _= []
 getBits' num offset x =
     ((x .&. (2 ^ offset)) /= 0) : (getBits' (num-1) (offset+1) x)
 
--- | Packs up to 15 Bits into a Word16 (=Property Flags)
-putPropBits :: [Bit] -> Put
-putPropBits xs = putWord16be $ (putPropBits' 0 xs)
-putPropBits' _ [] = 0
-putPropBits' offset (x:xs) =
-    (shiftL (toInt x) (15-offset)) .|. (putPropBits' (offset+1) xs)
-        where
-          toInt True = 1
-          toInt False = 0
-
-condPut (Just x) = put x
-condPut _ = return ()
-
 $(genContentHeaderProperties domainMap classes)
 
 $(genClassIDFuns classes)
@@ -52,3 +38,5 @@ $(genClassIDFuns classes)
 $(genMethodPayload domainMap classes)
 
 $(genGetContentHeaderProperties classes)
+
+$(genPutContentHeaderProperties classes)

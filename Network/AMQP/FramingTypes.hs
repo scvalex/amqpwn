@@ -3,22 +3,26 @@
 module Network.AMQP.FramingTypes
     ( Class(..), Method(..), Field(..), DomainMap
     , genClassIDFuns, genContentHeaderProperties, genMethodPayload
-    , genGetContentHeaderProperties
-    , getPropBits
+    , genGetContentHeaderProperties, genPutContentHeaderProperties
+    , getPropBits, putPropBits, condGet, condPut
     , listShow, fixClassName, fixMethodName, translateType, fieldType
     ) where
 
 import Control.Applicative ( (<$>) )
 import Control.Monad ( replicateM )
-import Data.Binary ( get )
+import Data.Binary ( get, put, Put )
 import Data.Binary.Get ( getWord16be )
+import Data.Binary.Put ( putWord16be )
 import Data.Bits
 import Data.Char
+import Data.Maybe ( isJust )
 import qualified Data.List as L
 import qualified Data.Map as M
 import Language.Haskell.TH
 import Language.Haskell.TH.Syntax ( Quasi )
 import Text.Printf ( printf )
+
+import Network.AMQP.Types ( Bit )
 
 data Class = Class String Int [Method] [Field]
              -- ^ className, classID, methods, content-fields
@@ -82,6 +86,19 @@ getPropBits num = getWord16be >>= \x -> return $ getPropBits' num 0  x
 condGet False = return Nothing
 condGet True = get >>= \x -> return $ Just x
 
+-- | Packs up to 15 Bits into a Word16 (=Property Flags)
+putPropBits :: [Bit] -> Put
+putPropBits xs = putWord16be $ (putPropBits' 0 xs)
+putPropBits' _ [] = 0
+putPropBits' offset (x:xs) =
+    (shiftL (toInt x) (15-offset)) .|. (putPropBits' (offset+1) xs)
+        where
+          toInt True = 1
+          toInt False = 0
+
+condPut (Just x) = put x
+condPut _ = return ()
+
 genContentHeaderProperties :: (Monad m) => DomainMap -> [Class] -> m [Dec]
 genContentHeaderProperties domainMap classes =
     return [DataD [] (mkName "ContentHeaderProperties") []
@@ -137,3 +154,19 @@ genGetContentHeaderProperties classes = do
                     [| condGet $(varE w) >>=
                        $(lamE [varP w'] (condGets ws ws')) |]
                 appAll exp vs = foldl appE exp vs
+
+genPutContentHeaderProperties :: (Monad m, Quasi m) => [Class] -> m [Dec]
+genPutContentHeaderProperties classes = do
+  clauses <- mapM (runQ . mkClause) classes
+  return [FunD (mkName "putContentHeaderProperties") clauses]
+      where
+        mkClause (Class nam index _ fields) = do
+          vs <- replicateM (length fields) (newName "x")
+          clause [conP (chClassName nam) (map varP vs)]
+                 (normalB $ mkFunBody vs)
+                 []
+        mkFunBody [] = [| putPropBits [] |]
+        mkFunBody vs = [| putPropBits $(isJusts vs) >> $(condPuts vs) |]
+        isJusts vs = listE $ map (appE [|isJust|] . varE) vs
+        condPuts [v] = [|condPut $(varE v)|]
+        condPuts (v:vs) = [| condPut $(varE v) >> $(condPuts vs) |]
