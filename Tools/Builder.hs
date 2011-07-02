@@ -38,8 +38,6 @@ main = do
                       classes
 
   -- generate content types
-  let contentHeadersGetInst =
-          concatMap (writeContentHeaderGetInstForClass domainMap) classes
   let contentHeadersPutInst =
           concatMap (writeContentHeaderPutInstForClass domainMap) classes
 
@@ -52,8 +50,7 @@ main = do
                      , printf "classes = %s" (listShow classes)
                      , "domainMap :: DomainMap"
                      , printf "domainMap = %s" (show domainMap) ]
-  {-putStrLn $ unlines [ contentHeadersGetInst
-                     , contentHeadersPutInst
+  {-putStrLn $ unlines [ contentHeadersPutInst
                      , "instance Binary MethodPayload where"
                      , binaryPutInst -- put instances
                      -- get instances
@@ -152,33 +149,6 @@ writeBinaryPutInstance domainMap fullName classIndex methodIndex fields =
               in "put " ++ wrap pattern ++" = " ++
                  "putWord16be " ++ (show classIndex) ++ " >> putWord16be " ++
                  (show methodIndex) ++ putStmt
-
----- contentheader get instance ----
-
-writeContentHeaderGetInstForClass :: M.Map String String -> Class -> String
-writeContentHeaderGetInstForClass domainMap (Class nam index methods fields) =
-    let fullName = "CH" ++ (fixClassName nam)
-    in --binary instances
-      (writeContentHeaderGetInstance domainMap fullName index fields)
-
-writeContentHeaderGetInstance :: DomainMap -> String -> Int -> [Field] -> String
-writeContentHeaderGetInstance domainMap fullName classIndex fields =
-    "getContentHeaderProperties " ++ (show classIndex) ++ " = "++getDef++"\n"
-        where
-          manyLetters = map (:[]) ['a'..'z']
-          usedLetters = take (length fields) manyLetters
-
-          showBlob x = "condGet " ++ x ++ " >>= \\" ++ x ++ "' -> "
-
-          getStmt = concatMap showBlob usedLetters
-
-          getDef =
-              let wrap = if (length fields) /= 0 then ("("++) . (++")") else id
-              in "getPropBits " ++ (show $ length fields) ++ " >>= \\[" ++
-                 (concat $ L.intersperse "," usedLetters ) ++ "] -> "++
-                 getStmt ++ " return " ++
-                 wrap (fullName ++ " " ++
-                 concatMap (++"' ") (take (length fields) usedLetters))
 
 ---- contentheader put instance ----
 

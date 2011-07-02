@@ -42,14 +42,6 @@ putPropBits' offset (x:xs) =
           toInt True = 1
           toInt False = 0
 
-getPropBits num = getWord16be >>= \x -> return $ getPropBits' num 0  x
-getPropBits' 0 offset _= []
-getPropBits' num offset x =
-    ((x .&. (2^(15-offset))) /= 0) : (getPropBits' (num-1) (offset+1) x)
-
-condGet False = return Nothing
-condGet True = get >>= \x -> return $ Just x
-
 condPut (Just x) = put x
 condPut _ = return ()
 
@@ -58,3 +50,5 @@ $(genContentHeaderProperties domainMap classes)
 $(genClassIDFuns classes)
 
 $(genMethodPayload domainMap classes)
+
+$(genGetContentHeaderProperties classes)
