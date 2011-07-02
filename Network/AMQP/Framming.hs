@@ -1,13 +1,18 @@
 -- -*- haskell-mode -*-
 
-module Network.AMQP.Generated where
+{-# LANGUAGE TemplateHaskell #-}
 
+module Network.AMQP.Framming where
+
+import Network.AMQP.FrammingData
+import Network.AMQP.FrammingTypes
 import Network.AMQP.Types
-import Data.Maybe
+
 import Data.Binary
 import Data.Binary.Get
 import Data.Binary.Put
 import Data.Bits
+import Data.Maybe
 
 -- * Bits need special handling because AMQP requires contiguous bits
 -- to be packed into a Word8
@@ -47,3 +52,5 @@ condGet True = get >>= \x -> return $ Just x
 
 condPut (Just x) = put x
 condPut _ = return ()
+
+$(genClassIDs classes)

@@ -3,6 +3,8 @@ import qualified Data.List as L
 import qualified Data.Map as M
 import Data.Maybe
 
+import Network.AMQP.FrammingTypes
+
 import System.Environment ( getArgs )
 
 import Text.Printf ( printf )
@@ -11,24 +13,11 @@ import Text.XML.Light
 import Text.XML.Light.Input
 import Text.XML.Light.Proc
 
-
-data Class = Class String Int [Method] [Field]
-             -- ^ className, classID, methods, content-fields
-             deriving (Show)
-
-data Method = Method String Int [Field]
-              -- ^methodName, methodID, fields
-              deriving (Show)
-
-data Field = TypeField String String   -- ^fieldName, fieldType
-           | DomainField String String -- ^fieldName, domainName
-             deriving (Show)
-
 type DomainMap = M.Map String String
 
 main :: IO ()
 main = do
-  [ specFn, tmplFn ] <- getArgs
+  [ specFn ] <- getArgs
   spec <- readFile specFn
   let parsed = parseXML spec
   let !(Elem e) = parsed !! 2
@@ -63,13 +52,16 @@ main = do
           concatMap (writeContentHeaderGetInstForClass domainMap) classes
   let contentHeadersPutInst =
           concatMap (writeContentHeaderPutInstForClass domainMap) classes
-  let contentHeadersClassIDs =
-          concatMap writeContentHeaderClassIDsForClass classes
 
-  putStrLn =<< readFile tmplFn
-  putStrLn $ unlines [ contentHeadersGetInst
+  putStrLn "module Network.AMQP.FrammingData where\n\
+           \\n\
+           \import Network.AMQP.FrammingTypes\n"
+  putStrLn $ unlines [ "classes :: [Class]"
+                     , printf "classes = %s" (listShow classes) ]
+  {-putStrLn $ unlines [ contentHeadersGetInst
                      , contentHeadersPutInst
-                     , contentHeadersClassIDs
+                     , "classes :: [Class]"
+                     , printf "classes = %s" (listShow classes)
                      , "data ContentHeaderProperties ="
                      , "\t" ++ contentHeaders
                      , "\tderiving Show"
@@ -84,7 +76,7 @@ main = do
                      , binaryGetInst
                      -- data declaration
                      , dataDecl
-                     ]
+                     ]-}
 
 fieldType domainMap (TypeField _ x) = x
 fieldType domainMap (DomainField _ domain) =
@@ -100,12 +92,6 @@ translateType "table" = "FieldTable"
 translateType "longlong" = "LongLongInt"
 translateType "timestamp" = "Timestamp"
 translateType x = error x
-
-fixClassName s = (toUpper $ head s):(tail s)
-fixMethodName s = map f s
-    where
-      f '-' = '_'
-      f x   = x
 
 fixFieldName "type" = "typ"
 fixFieldName s = map f s
@@ -297,18 +283,6 @@ writeContentHeaderPutInstance domainMap fullName classIndex fields =
                              usedLetters) ++ "] " ++ putStmt
 
 ---- contentheader class ids -----
-writeContentHeaderClassIDsForClass :: Class -> String
-writeContentHeaderClassIDsForClass (Class nam index methods fields) =
-    let fullName = "CH" ++ (fixClassName nam)
-    in --binary instances
-      (writeContentHeaderClassIDsInstance fullName index fields)
-
-writeContentHeaderClassIDsInstance :: String -> Int -> [Field] -> String
-writeContentHeaderClassIDsInstance fullName classIndex fields =
-    "getClassIDOf (" ++ fullName ++
-    (concat $ replicate (length fields) " _") ++ ") = " ++
-    (show classIndex) ++ "\n"
-
 readDomain d =
     let (Just domainName) = lookupAttr (unqual "name") $ elAttribs d
         (Just typ) = lookupAttr (unqual "type") $ elAttribs d

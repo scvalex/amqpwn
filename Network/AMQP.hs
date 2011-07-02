@@ -136,7 +136,7 @@ import qualified Network.Socket.ByteString as NB
 import Network.AMQP.Protocol
 import Network.AMQP.Types
 import Network.AMQP.Helpers
-import Network.AMQP.Generated
+import Network.AMQP.Framming
 
 
 

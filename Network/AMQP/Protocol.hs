@@ -13,7 +13,7 @@ import Data.Char
 import Data.Int
 
 import Network.AMQP.Types
-import Network.AMQP.Generated
+import Network.AMQP.Framming
 
 
 --True if a content (contentheader and possibly contentbody) will follow the method        

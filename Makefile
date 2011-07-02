@@ -1,11 +1,13 @@
+FRAMMING_DATA := Network/AMQP/FrammingData.hs
+
 all: framing
 
-framing: Network/AMQP/Generated.hs
+framing: $(FRAMMING_DATA)
 
 clean:
-	rm -f Network/AMQP/Generated.hs
+	rm -f $(FRAMMING_DATA)
 
 .PHONY: all framing clean
 
-Network/AMQP/Generated.hs: Tools/Builder.hs Tools/amqp0-8.xml Tools/Generated.hs.in
+$(FRAMMING_DATA): Tools/Builder.hs Tools/amqp0-8.xml
 	runhaskell $+ > $@
