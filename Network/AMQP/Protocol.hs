@@ -6,31 +6,27 @@ import Data.Binary.Get
 import Data.Binary.Put
 
 import qualified Data.ByteString.Lazy.Char8 as BL
-import qualified Data.Binary.Put as BPut
-import Control.Monad
-
-import Data.Char
-import Data.Int
 
 import Network.AMQP.Types
 import Network.AMQP.Framing
 
 
---True if a content (contentheader and possibly contentbody) will follow the method        
+-- | True if a content (contentheader and possibly contentbody) will
+-- follow the method
+hasContent :: FramePayload -> Bool
 hasContent (MethodPayload (Basic_get_ok _ _ _ _ _)) = True
 hasContent (MethodPayload (Basic_deliver _ _ _ _ _)) = True
 hasContent (MethodPayload (Basic_return _ _ _ _)) = True
 hasContent _ = False
-        
 
 data Frame = Frame ChannelID FramePayload --channel, payload
     deriving Show
 instance Binary Frame where
     get = do
-        frameType <- getWord8
+        thisFrameType <- getWord8
         channel <- get :: Get ChannelID
         payloadSize <- get :: Get PayloadSize 
-        payload <- getPayload frameType payloadSize :: Get FramePayload
+        payload <- getPayload thisFrameType payloadSize :: Get FramePayload
         0xCE <- getWord8 --frame end
         return $ Frame channel payload  
     put (Frame chan payload) = do
@@ -59,27 +55,27 @@ data FramePayload =
              | ContentHeaderPayload ShortInt ShortInt LongLongInt ContentHeaderProperties --classID, weight, bodySize, propertyFields
              | ContentBodyPayload BL.ByteString
     deriving Show
-    
-frameType (MethodPayload _) = 1    
+
+frameType :: (Num n) => FramePayload -> n
+frameType (MethodPayload _) = 1
 frameType (ContentHeaderPayload _ _ _ _) = 2
 frameType (ContentBodyPayload _) = 3
-    
-getPayload 1 payloadSize = do --METHOD FRAME
+
+getPayload :: (Num n1, Integral n2) => n1 -> n2 -> Get FramePayload
+getPayload 1 _ = do             -- METHOD FRAME
     payLoad <- get :: Get MethodPayload
     return (MethodPayload payLoad)
-    
-getPayload 2 payloadSize = do --content header frame
+getPayload 2 _ = do             -- content header frame
     classID <- get :: Get ShortInt
     weight <- get :: Get ShortInt
     bodySize <- get :: Get LongLongInt
-   
     props <- getContentHeaderProperties classID
     return (ContentHeaderPayload classID weight bodySize props)
-
 getPayload 3 payloadSize = do --content body frame
     payload <- getLazyByteString $ fromIntegral payloadSize
     return (ContentBodyPayload payload)
-    
+
+putPayload :: FramePayload -> Put
 putPayload (MethodPayload payload) = do
     put payload
       
