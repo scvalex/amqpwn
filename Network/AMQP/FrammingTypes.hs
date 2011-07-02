@@ -12,27 +12,15 @@ import Text.Printf ( printf )
 
 data Class = Class String Int [Method] [Field]
              -- ^ className, classID, methods, content-fields
-
-instance Show Class where
-    show (Class name id methods cfs) =
-        printf "Class \"%s\" %d %s %s" name id
-                   (listShow methods) (listShow cfs)
+           deriving ( Show )
 
 data Method = Method String Int [Field]
               -- ^methodName, methodID, fields
-
-instance Show Method where
-    show (Method name id fields) =
-        printf "Method \"%s\" %d %s" name id (listShow fields)
+              deriving ( Show )
 
 data Field = TypeField String String   -- ^fieldName, fieldType
            | DomainField String String -- ^fieldName, domainName
-
-instance Show Field where
-    show (TypeField name value) =
-        printf "TypeField \"%s\" \"%s\"" name value
-    show (DomainField name value) =
-        printf "DomainField \"%s\" \"%s\"" name value
+             deriving ( Show )
 
 type DomainMap = M.Map String String
 
