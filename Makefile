@@ -10,7 +10,6 @@ build: dist/setup-config
 clean:
 	cabal clean
 	rm -f $(FRAMMING_DATA)
-	find . -name '*.o' -or -name '*.hi' -exec rm -f '{}' \;
 
 .PHONY: all framing clean
 

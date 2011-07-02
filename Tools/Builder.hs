@@ -44,8 +44,6 @@ main = do
                       classes
 
   -- generate content types
-  let contentHeaders = concat $ L.intersperse "\t|" $
-                       map (writeContentHeaderForClass domainMap) classes
   let contentHeadersGetInst =
           concatMap (writeContentHeaderGetInstForClass domainMap) classes
   let contentHeadersPutInst =
@@ -193,25 +191,6 @@ writeBinaryPutInstance domainMap fullName classIndex methodIndex fields =
               in "put " ++ wrap pattern ++" = " ++
                  "putWord16be " ++ (show classIndex) ++ " >> putWord16be " ++
                  (show methodIndex) ++ putStmt
-
----- content header declaration ----
-
-writeContentHeaderForClass :: M.Map String String -> Class -> String
-writeContentHeaderForClass domainMap (Class nam index methods fields) =
-    let fullName = "CH"++(fixClassName nam)
-    in  (writeContentHeaderDecl domainMap fullName fields)
-
-writeContentHeaderDecl :: DomainMap -> String -> [Field] -> String
-writeContentHeaderDecl domainMap fullName fields =
-    fullName ++ "\n\t\t" ++ (concat $ L.intersperse "\n\t\t" $
-                             map writeF fields) ++ "\n"
-        where
-          writeF (TypeField nam typ) =
-              "(Maybe " ++ (translateType typ) ++ ") -- " ++
-              (fixFieldName nam)
-          writeF f@(DomainField nam domain) =
-              "(Maybe " ++ (translateType $ fieldType domainMap f) ++
-              ") -- " ++ (fixFieldName nam)
 
 ---- contentheader get instance ----
 
