@@ -137,7 +137,7 @@ genMethodPayload domainMap classes =
               let fullName = mkName $ mkMethodName clsNam nam
               in NormalC fullName (map (mkField domainMap id) fields)
 
-genGetContentHeaderProperties :: (Monad m, Quasi m) => [Class] -> m [Dec]
+genGetContentHeaderProperties :: (Quasi m) => [Class] -> m [Dec]
 genGetContentHeaderProperties classes = do
   clauses <- mapM (runQ . mkClause) classes
   return [FunD (mkName "getContentHeaderProperties") clauses]
@@ -162,7 +162,7 @@ genGetContentHeaderProperties classes = do
                                   else appAll (conE nam) (map varE vs'))
                 appAll = foldl appE
 
-genPutContentHeaderProperties :: (Monad m, Quasi m) => [Class] -> m [Dec]
+genPutContentHeaderProperties :: (Quasi m) => [Class] -> m [Dec]
 genPutContentHeaderProperties classes = do
   clauses <- mapM (runQ . mkClause) classes
   return [FunD (mkName "putContentHeaderProperties") clauses]
@@ -175,11 +175,8 @@ genPutContentHeaderProperties classes = do
         mkFunBody [] = [| putPropBits [] |]
         mkFunBody vs = [| putPropBits $(isJusts vs) >> $(condPuts vs) |]
         isJusts vs = listE $ map (appE [|isJust|] . varE) vs
-        condPuts [] = fail "bad juju"
-        condPuts [v] = [|condPut $(varE v)|]
+        condPuts [] = [|return ()|]
         condPuts (v:vs) = [| condPut $(varE v) >> $(condPuts vs) |]
-
--- FIXME: Quasi instead of Monad; default to return () when processing lists
 
 genMethodPayloadBinaryInstance :: (Quasi m) => DomainMap -> [Class] -> m [Dec]
 genMethodPayloadBinaryInstance domainMap classes = do
