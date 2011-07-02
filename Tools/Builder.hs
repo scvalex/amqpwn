@@ -29,12 +29,6 @@ main = do
   -- read classes
   let classes = map readClass $ findChildren (unqual "class") e :: [Class]
 
-  -- generate data declaration
-  let dataDecl = unlines [ "data MethodPayload = \n"
-                         , concat $ L.intersperse "\t|" $
-                           concatMap (writeDataDeclForClass domainMap) classes
-                         , "\tderiving Show" ]
-
   -- generate binary instances for data-type
   let binaryGetInst = concat $ map ("\t"++) $
                       concatMap (writeBinaryGetInstForClass domainMap)
@@ -60,12 +54,6 @@ main = do
                      , printf "domainMap = %s" (show domainMap) ]
   {-putStrLn $ unlines [ contentHeadersGetInst
                      , contentHeadersPutInst
-                     , "classes :: [Class]"
-                     , printf "classes = %s" (listShow classes)
-                     , "data ContentHeaderProperties ="
-                     , "\t" ++ contentHeaders
-                     , "\tderiving Show"
-                     , ""
                      , "instance Binary MethodPayload where"
                      , binaryPutInst -- put instances
                      -- get instances
@@ -74,8 +62,6 @@ main = do
                      , "\t\tmethodID <- getWord16be"
                      , "\t\tcase (classID, methodID) of"
                      , binaryGetInst
-                     -- data declaration
-                     , dataDecl
                      ]-}
 
 fixFieldName "type" = "typ"
@@ -83,31 +69,6 @@ fixFieldName s = map f s
     where
         f ' ' = '_'
         f x = x
-
----- data declaration ----
-
-writeDataDeclForClass :: DomainMap -> Class -> [String]
-writeDataDeclForClass domainMap (Class nam index methods _) =
-    map ("\n\t"++) $ map (writeDataDeclForMethod domainMap nam) methods
-
-writeDataDeclForMethod :: DomainMap -> String -> Method -> String
-writeDataDeclForMethod domainMap className (Method nam index fields) =
-    let fullName = (fixClassName className) ++ "_"++(fixMethodName nam)
-    in  --data type declaration
-      (writeTypeDecl domainMap fullName fields)
-      --binary instances
-      --(writeBinaryInstance fullName fields)
-
-writeTypeDecl :: DomainMap -> String -> [Field] -> String
-writeTypeDecl domainMap fullName fields =
-    fullName ++ "\n\t\t" ++
-    (concat $ L.intersperse "\n\t\t" $ map writeF fields) ++ "\n"
-        where
-          writeF (TypeField nam typ) =
-              (translateType typ) ++ " -- " ++ (fixFieldName nam)
-          writeF f@(DomainField nam domain) =
-              (translateType $ fieldType domainMap f) ++ " -- " ++
-              (fixFieldName nam)
 
 ---- binary get instance ----
 

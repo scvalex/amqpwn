@@ -1,6 +1,6 @@
 module Network.AMQP.FrammingTypes
     ( Class(..), Method(..), Field(..), DomainMap
-    , genClassIDFuns, genContentHeaderProperties
+    , genClassIDFuns, genContentHeaderProperties, genMethodPayload
     , listShow, fixClassName, fixMethodName, translateType, fieldType
     ) where
 
@@ -47,6 +47,23 @@ genClassIDFuns classes =
               Clause ([RecP (chClassName nam) []])
                      (NormalB (LitE (IntegerL (fromIntegral index))))
                      []
+
+genMethodPayload :: (Monad m) => DomainMap -> [Class] -> m [Dec]
+genMethodPayload domainMap classes =
+    return [DataD [] (mkName "MethodPayload") []
+                  (concatMap mkConstr classes) [mkName "Show"]]
+        where
+          mkConstr (Class nam _ methods _) =
+              map (mkMethodConstr nam) methods
+          mkMethodConstr clsNam (Method nam _ fields) =
+              let fullName = mkName $ printf "%s_%s" (fixClassName clsNam)
+                                                     (fixMethodName nam)
+              in NormalC fullName (map mkField fields)
+          mkField (TypeField _ typ) =
+              (NotStrict, ConT $ mkName $ translateType typ)
+          mkField df@(DomainField _ _) =
+              (NotStrict, ConT $ mkName $ translateType
+                              $ fieldType domainMap df)
 
 chClassName :: String -> Name
 chClassName name = mkName $ "CH" ++ (fixClassName name)

@@ -56,3 +56,5 @@ condPut _ = return ()
 $(genContentHeaderProperties domainMap classes)
 
 $(genClassIDFuns classes)
+
+$(genMethodPayload domainMap classes)
