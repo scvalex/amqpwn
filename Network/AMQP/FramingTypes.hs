@@ -4,12 +4,13 @@ module Network.AMQP.FramingTypes
     ( Class(..), Method(..), Field(..), DomainMap
     , genClassIDFuns, genContentHeaderProperties, genMethodPayload
     , genGetContentHeaderProperties, genPutContentHeaderProperties
+    , genMethodPayloadBinaryInstance
     , getPropBits, putPropBits, condGet, condPut
     , listShow, fixClassName, fixMethodName, translateType, fieldType
     ) where
 
 import Control.Monad ( replicateM )
-import Data.Binary ( Binary, get, put )
+import Data.Binary ( Binary(..) )
 import Data.Binary.Get ( Get, getWord16be )
 import Data.Binary.Put ( Put, putWord16be )
 import Data.Bits
@@ -103,6 +104,9 @@ condPut :: (Binary b) => (Maybe b) -> Put
 condPut (Just x) = put x
 condPut _ = return ()
 
+mkMethodName :: String -> String -> String
+mkMethodName cNam nam= printf "%s_%s" (fixClassName cNam) (fixMethodName nam)
+
 genContentHeaderProperties :: (Monad m) => DomainMap -> [Class] -> m [Dec]
 genContentHeaderProperties domainMap classes =
     return [DataD [] (mkName "ContentHeaderProperties") []
@@ -130,8 +134,7 @@ genMethodPayload domainMap classes =
           mkConstr (Class nam _ methods _) =
               map (mkMethodConstr nam) methods
           mkMethodConstr clsNam (Method nam _ fields) =
-              let fullName = mkName $ printf "%s_%s" (fixClassName clsNam)
-                                                     (fixMethodName nam)
+              let fullName = mkName $ mkMethodName clsNam nam
               in NormalC fullName (map (mkField domainMap id) fields)
 
 genGetContentHeaderProperties :: (Monad m, Quasi m) => [Class] -> m [Dec]
@@ -175,3 +178,29 @@ genPutContentHeaderProperties classes = do
         condPuts [] = fail "bad juju"
         condPuts [v] = [|condPut $(varE v)|]
         condPuts (v:vs) = [| condPut $(varE v) >> $(condPuts vs) |]
+
+-- FIXME: Quasi instead of Monad; default to return () when processing lists
+
+genMethodPayloadBinaryInstance :: (Quasi m) => DomainMap -> [Class] -> m [Dec]
+genMethodPayloadBinaryInstance domainMap classes = do
+  p <- runQ mkPut
+  return [InstanceD []
+          (AppT (ConT $ mkName "Binary") (ConT $ mkName "MethodPayload"))
+          [p]]
+      where
+        mkPut = funD (mkName "put") (concatMap mkClassClause classes)
+        mkClassClause (Class nam index methods _) =
+            map (mkClause nam index) methods
+        mkClause clsNam clsIdx (Method nam index fields) = do
+          vs <- replicateM (length fields) (newName "x")
+          clause [conP (mkName $ mkMethodName clsNam nam) (map varP vs)]
+                 (mkClauseBody clsIdx index vs)
+                 []
+        mkClauseBody clsIdx mthdIdx vs =
+            normalB [| putWord16be $(litE . integerL $
+                                     fromIntegral clsIdx) >>
+                       putWord16be $(litE . integerL $
+                                     fromIntegral mthdIdx) >>
+                       $(putAll vs) |]
+        putAll [] = [| return () |]
+        putAll (v:vs) = [| put $(varE v) >> $(putAll vs) |]

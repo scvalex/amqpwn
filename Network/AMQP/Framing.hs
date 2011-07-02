@@ -8,6 +8,7 @@ import Network.AMQP.FramingData
 import Network.AMQP.FramingTypes
 import Network.AMQP.Types
 
+import Data.Binary ( Binary(..) )
 import Data.Binary.Get ( Get, getWord8 )
 import Data.Binary.Put ( Put, putWord8 )
 import Data.Bits
@@ -44,3 +45,5 @@ $(genMethodPayload domainMap classes)
 $(genGetContentHeaderProperties classes)
 
 $(genPutContentHeaderProperties classes)
+
+$(genMethodPayloadBinaryInstance domainMap classes)

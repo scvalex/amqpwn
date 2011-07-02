@@ -33,9 +33,6 @@ main = do
   let binaryGetInst = concat $ map ("\t"++) $
                       concatMap (writeBinaryGetInstForClass domainMap)
                       classes
-  let binaryPutInst = concat $ map ("\t"++) $
-                      concatMap (writeBinaryPutInstForClass domainMap)
-                      classes
 
   putStrLn "module Network.AMQP.FramingData where\n\
            \\n\
@@ -53,7 +50,6 @@ main = do
                      , "\t\tclassID <- getWord16be"
                      , "\t\tmethodID <- getWord16be"
                      , "\t\tcase (classID, methodID) of"
-                     , binaryGetInst
                      ]-}
 
 fixFieldName "type" = "typ"
@@ -104,46 +100,6 @@ writeBinaryGetInstance domainMap fullName classIndex methodIndex fields =
               in  getStmt ++ " return " ++
                   wrap (fullName ++ concatMap (" "++) (take (length fields)
                                                        manyLetters))
-
----- binary put instance ----
-
-writeBinaryPutInstForClass :: DomainMap -> Class -> [String]
-writeBinaryPutInstForClass domainMap (Class nam index methods _) =
-    map (writeBinaryPutInstForMethod domainMap nam index) methods
-
-writeBinaryPutInstForMethod :: DomainMap -> String -> Int -> Method -> String
-writeBinaryPutInstForMethod domainMap className classIndex (Method nam index fields) =
-    let fullName = (fixClassName className) ++ "_" ++ (fixMethodName nam)
-    in  --binary instances
-      (writeBinaryPutInstance domainMap fullName classIndex index fields)
-
-writeBinaryPutInstance :: DomainMap -> String -> Int -> Int -> [Field] -> String
-writeBinaryPutInstance domainMap fullName classIndex methodIndex fields =
-    putDef ++ "\n"
-        where
-          manyLetters = map (:[]) ['a'..'z']
-
-          fieldTypes :: [(String,String)] --(a..z, fieldType)
-          fieldTypes = zip manyLetters $ map (fieldType domainMap) fields
-
-          --consecutive BITS have to be merged into a Word8
-          --TODO: more than 8bits have to be split into several Word8
-          grouped :: [ [(String, String)] ]
-          grouped = L.groupBy (\(_,x) (_,y) -> x=="bit" && y=="bit") fieldTypes
-
-          showBlob xs | length xs == 1 =  " >> put "++(fst $ xs!!0)
-          showBlob xs = " >> putBits [" ++
-                        (concat $ L.intersperse "," $ map fst xs) ++ "]"
-
-          putStmt = concatMap showBlob grouped
-
-          putDef =
-              let wrap = if (length fields) /= 0 then ("("++) . (++")") else id
-                  pattern = fullName ++ concatMap (' ':) (take (length fields)
-                                                               manyLetters)
-              in "put " ++ wrap pattern ++" = " ++
-                 "putWord16be " ++ (show classIndex) ++ " >> putWord16be " ++
-                 (show methodIndex) ++ putStmt
 
 ---- contentheader class ids -----
 readDomain d =
