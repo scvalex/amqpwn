@@ -1,11 +1,12 @@
 module Network.AMQP.FrammingTypes
-    ( Class(..), Method(..), Field(..)
-    , genClassIDs
-    , listShow, fixClassName, fixMethodName
+    ( Class(..), Method(..), Field(..), DomainMap
+    , genClassIDFuns, genContentHeaderProperties
+    , listShow, fixClassName, fixMethodName, translateType, fieldType
     ) where
 
 import Data.Char
 import qualified Data.List as L
+import qualified Data.Map as M
 import Language.Haskell.TH
 import Text.Printf ( printf )
 
@@ -33,14 +34,34 @@ instance Show Field where
     show (DomainField name value) =
         printf "DomainField \"%s\" \"%s\"" name value
 
-genClassIDs :: (Monad m) => [Class] -> m [Dec]
-genClassIDs classes = return [FunD (mkName "getGlassIDOf") clauses]
-    where
-      clauses = map mkClause classes
-      mkClause (Class nam index _ fields) =
-          Clause ([RecP (mkName ("CH" ++ (fixClassName nam))) []])
-                 (NormalB (LitE (IntegerL (fromIntegral index))))
-                 []
+type DomainMap = M.Map String String
+
+genContentHeaderProperties :: (Monad m) => DomainMap -> [Class] -> m [Dec]
+genContentHeaderProperties domainMap classes =
+    return [DataD [] (mkName "ContentHeaderProperties") []
+                  (map mkConstr classes) [mkName "Show"]]
+        where
+          mkConstr (Class nam index _ fields) =
+              NormalC (chClassName nam) (map mkField fields)
+          mkField (TypeField _ typ) =
+              (NotStrict, AppT (ConT $ mkName "Maybe")
+                               (ConT $ mkName $ translateType typ))
+          mkField df@(DomainField _ _) =
+              (NotStrict, AppT (ConT $ mkName "Maybe")
+                               (ConT $ mkName $ translateType
+                                     $ fieldType domainMap df))
+
+genClassIDFuns :: (Monad m) => [Class] -> m [Dec]
+genClassIDFuns classes =
+    return [FunD (mkName "getGlassIDOf") (map mkClause classes)]
+        where
+          mkClause (Class nam index _ fields) =
+              Clause ([RecP (chClassName nam) []])
+                     (NormalB (LitE (IntegerL (fromIntegral index))))
+                     []
+
+chClassName :: String -> Name
+chClassName name = mkName $ "CH" ++ (fixClassName name)
 
 listShow :: (Show a) => [a] -> String
 listShow cs = "[" ++ (L.intercalate ", " $ map show cs) ++ "]"
@@ -53,3 +74,21 @@ fixMethodName = map f
     where
       f '-' = '_'
       f x   = x
+
+translateType :: String -> String
+translateType "octet" = "Octet"
+translateType "longstr" = "LongString"
+translateType "shortstr" = "ShortString"
+translateType "short" = "ShortInt"
+translateType "long" = "LongInt"
+translateType "bit" = "Bit"
+translateType "table" = "FieldTable"
+translateType "longlong" = "LongLongInt"
+translateType "timestamp" = "Timestamp"
+translateType x = error x
+
+fieldType :: DomainMap -> Field -> String
+fieldType domainMap (TypeField _ x) = x
+fieldType domainMap (DomainField _ domain) =
+    let (Just v) = M.lookup domain domainMap
+    in v

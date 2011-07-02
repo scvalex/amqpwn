@@ -13,8 +13,6 @@ import Text.XML.Light
 import Text.XML.Light.Input
 import Text.XML.Light.Proc
 
-type DomainMap = M.Map String String
-
 main :: IO ()
 main = do
   [ specFn ] <- getArgs
@@ -55,9 +53,13 @@ main = do
 
   putStrLn "module Network.AMQP.FrammingData where\n\
            \\n\
-           \import Network.AMQP.FrammingTypes\n"
+           \import Network.AMQP.FrammingTypes\n\
+           \import Data.Map ( fromList )\n"
+
   putStrLn $ unlines [ "classes :: [Class]"
-                     , printf "classes = %s" (listShow classes) ]
+                     , printf "classes = %s" (listShow classes)
+                     , "domainMap :: DomainMap"
+                     , printf "domainMap = %s" (show domainMap) ]
   {-putStrLn $ unlines [ contentHeadersGetInst
                      , contentHeadersPutInst
                      , "classes :: [Class]"
@@ -77,21 +79,6 @@ main = do
                      -- data declaration
                      , dataDecl
                      ]-}
-
-fieldType domainMap (TypeField _ x) = x
-fieldType domainMap (DomainField _ domain) =
-    fromJust $ M.lookup domain domainMap
-
-translateType "octet" = "Octet"
-translateType "longstr" = "LongString"
-translateType "shortstr" = "ShortString"
-translateType "short" = "ShortInt"
-translateType "long" = "LongInt"
-translateType "bit" = "Bit"
-translateType "table" = "FieldTable"
-translateType "longlong" = "LongLongInt"
-translateType "timestamp" = "Timestamp"
-translateType x = error x
 
 fixFieldName "type" = "typ"
 fixFieldName s = map f s

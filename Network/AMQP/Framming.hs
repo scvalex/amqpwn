@@ -53,4 +53,6 @@ condGet True = get >>= \x -> return $ Just x
 condPut (Just x) = put x
 condPut _ = return ()
 
-$(genClassIDs classes)
+$(genContentHeaderProperties domainMap classes)
+
+$(genClassIDFuns classes)
