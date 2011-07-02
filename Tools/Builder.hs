@@ -3,7 +3,7 @@ import qualified Data.List as L
 import qualified Data.Map as M
 import Data.Maybe
 
-import Network.AMQP.FrammingTypes
+import Network.AMQP.FramingTypes
 
 import System.Environment ( getArgs )
 
@@ -41,9 +41,9 @@ main = do
   let contentHeadersPutInst =
           concatMap (writeContentHeaderPutInstForClass domainMap) classes
 
-  putStrLn "module Network.AMQP.FrammingData where\n\
+  putStrLn "module Network.AMQP.FramingData where\n\
            \\n\
-           \import Network.AMQP.FrammingTypes\n\
+           \import Network.AMQP.FramingTypes\n\
            \import Data.Map ( fromList )\n"
 
   putStrLn $ unlines [ "classes :: [Class]"

@@ -1,6 +1,6 @@
 {-# LANGUAGE TemplateHaskell #-}
 
-module Network.AMQP.FrammingTypes
+module Network.AMQP.FramingTypes
     ( Class(..), Method(..), Field(..), DomainMap
     , genClassIDFuns, genContentHeaderProperties, genMethodPayload
     , genGetContentHeaderProperties

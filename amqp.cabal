@@ -18,5 +18,5 @@ Library
   Build-Depends:      base >= 4 && < 5, binary, containers>=0.2, bytestring>=0.9, network>=2.2.3.1, template-haskell
   ghc-options:        -O2 -ddump-splices
   Exposed-modules:    Network.AMQP, Network.AMQP.Types
-  Other-modules:      Network.AMQP.Framming, Network.AMQP.Helpers, Network.AMQP.Protocol
+  Other-modules:      Network.AMQP.Framing, Network.AMQP.Helpers, Network.AMQP.Protocol
 

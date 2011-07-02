@@ -2,10 +2,10 @@
 
 {-# LANGUAGE TemplateHaskell #-}
 
-module Network.AMQP.Framming where
+module Network.AMQP.Framing where
 
-import Network.AMQP.FrammingData
-import Network.AMQP.FrammingTypes
+import Network.AMQP.FramingData
+import Network.AMQP.FramingTypes
 import Network.AMQP.Types
 
 import Data.Binary
