@@ -8,16 +8,16 @@ module Network.AMQP.FramingTypes
     , listShow, fixClassName, fixMethodName, translateType, fieldType
     ) where
 
-import Control.Applicative ( (<$>) )
 import Control.Monad ( replicateM )
-import Data.Binary ( get, put, Put )
-import Data.Binary.Get ( getWord16be )
-import Data.Binary.Put ( putWord16be )
+import Data.Binary ( Binary, get, put )
+import Data.Binary.Get ( Get, getWord16be )
+import Data.Binary.Put ( Put, putWord16be )
 import Data.Bits
 import Data.Char
-import Data.Maybe ( isJust )
 import qualified Data.List as L
 import qualified Data.Map as M
+import Data.Maybe ( isJust )
+import Data.Word ( Word16 )
 import Language.Haskell.TH
 import Language.Haskell.TH.Syntax ( Quasi )
 import Text.Printf ( printf )
@@ -66,7 +66,7 @@ translateType "timestamp" = "Timestamp"
 translateType x = error x
 
 fieldType :: DomainMap -> Field -> String
-fieldType domainMap (TypeField _ x) = x
+fieldType _ (TypeField _ x) = x
 fieldType domainMap (DomainField _ domain) =
     let (Just v) = M.lookup domain domainMap in v
 
@@ -77,25 +77,29 @@ mkField domainMap f df@(DomainField _ _) =
     (NotStrict, f $ ConT $ mkName $ translateType
                          $ fieldType domainMap df)
 
-getPropBits num = getWord16be >>= \x -> return $ getPropBits' num 0  x
+getPropBits :: Integer -> Get [Bit]
+getPropBits num = getWord16be >>= \x -> return $ getPropBits' num 0 x
     where
-      getPropBits' 0 offset _ = []
-      getPropBits' num offset x =
-          ((x .&. (2^(15-offset))) /= 0) : (getPropBits' (num-1) (offset+1) x)
+      getPropBits' :: Integer -> Integer -> Word16 -> [Bit]
+      getPropBits' 0 _ _ = []
+      getPropBits' n offset x =
+          ((x .&. (2^(15-offset))) /= 0) : (getPropBits' (n-1) (offset+1) x)
 
+condGet :: (Binary b) => Bool -> Get (Maybe b)
 condGet False = return Nothing
 condGet True = get >>= \x -> return $ Just x
 
 -- | Packs up to 15 Bits into a Word16 (=Property Flags)
 putPropBits :: [Bit] -> Put
 putPropBits xs = putWord16be $ (putPropBits' 0 xs)
-putPropBits' _ [] = 0
-putPropBits' offset (x:xs) =
-    (shiftL (toInt x) (15-offset)) .|. (putPropBits' (offset+1) xs)
-        where
-          toInt True = 1
-          toInt False = 0
+    where
+      putPropBits' _ [] = 0
+      putPropBits' offset (y:ys) =
+          (shiftL (toInt y) (15-offset)) .|. (putPropBits' (offset+1) ys)
+      toInt True = 1
+      toInt False = 0
 
+condPut :: (Binary b) => (Maybe b) -> Put
 condPut (Just x) = put x
 condPut _ = return ()
 
@@ -104,7 +108,7 @@ genContentHeaderProperties domainMap classes =
     return [DataD [] (mkName "ContentHeaderProperties") []
                   (map mkConstr classes) [mkName "Show"]]
         where
-          mkConstr (Class nam index _ fields) =
+          mkConstr (Class nam _ _ fields) =
               NormalC (chClassName nam)
                       (map (mkField domainMap maybeF) fields)
           maybeF = AppT (ConT $ mkName "Maybe")
@@ -113,7 +117,7 @@ genClassIDFuns :: (Monad m) => [Class] -> m [Dec]
 genClassIDFuns classes =
     return [FunD (mkName "getGlassIDOf") (map mkClause classes)]
         where
-          mkClause (Class nam index _ fields) =
+          mkClause (Class nam index _ _) =
               Clause [RecP (chClassName nam) []]
                      (NormalB (LitE (IntegerL (fromIntegral index))))
                      []
@@ -146,21 +150,21 @@ genGetContentHeaderProperties classes = do
                        $(mkConstr nam vs vs') |]
           mkConstr nam vs vs' = lamE [listP $ map varP vs] (condGets vs vs')
               where
+                condGets (w:ws) (w':ws') =
+                    [| condGet $(varE w) >>=
+                       $(lamE [varP w'] (condGets ws ws')) |]
                 condGets [] [] = appE [|return|]
                                  (if null vs
                                   then conE nam
                                   else appAll (conE nam) (map varE vs'))
-                condGets (w:ws) (w':ws') =
-                    [| condGet $(varE w) >>=
-                       $(lamE [varP w'] (condGets ws ws')) |]
-                appAll exp vs = foldl appE exp vs
+                appAll = foldl appE
 
 genPutContentHeaderProperties :: (Monad m, Quasi m) => [Class] -> m [Dec]
 genPutContentHeaderProperties classes = do
   clauses <- mapM (runQ . mkClause) classes
   return [FunD (mkName "putContentHeaderProperties") clauses]
       where
-        mkClause (Class nam index _ fields) = do
+        mkClause (Class nam _ _ fields) = do
           vs <- replicateM (length fields) (newName "x")
           clause [conP (chClassName nam) (map varP vs)]
                  (normalB $ mkFunBody vs)
@@ -168,5 +172,6 @@ genPutContentHeaderProperties classes = do
         mkFunBody [] = [| putPropBits [] |]
         mkFunBody vs = [| putPropBits $(isJusts vs) >> $(condPuts vs) |]
         isJusts vs = listE $ map (appE [|isJust|] . varE) vs
+        condPuts [] = fail "bad juju"
         condPuts [v] = [|condPut $(varE v)|]
         condPuts (v:vs) = [| condPut $(varE v) >> $(condPuts vs) |]

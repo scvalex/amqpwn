@@ -24,9 +24,6 @@ import Data.Binary.Get
 import Data.Binary.Put
 import qualified Data.ByteString.Char8 as BS
 import qualified Data.ByteString.Lazy.Char8 as BL
-import qualified Data.ByteString.Lazy.Internal as BL
-import qualified Data.Binary.Put as BPut
-import Control.Monad
 import qualified Data.Map as M
 
 
@@ -34,14 +31,17 @@ import qualified Data.Map as M
 -- performs runGet on a bytestring until the string is empty
 readMany :: (Show t, Binary t) => BL.ByteString -> [t]
 readMany str = runGet (readMany' [] 0) str
-readMany' _ 1000 = error "readMany overflow"
-readMany' acc overflow = do
-    x <- get
-    rem <- remaining
-    if rem > 0 
-        then readMany' (x:acc) (overflow+1)
-        else return (x:acc)
-        
+    where
+      readMany' :: (Binary t) => [t] -> Integer -> Get [t]
+      readMany' _ 1000 = error "readMany overflow"
+      readMany' acc overflow = do
+        x <- get
+        r <- remaining
+        if r > 0
+          then readMany' (x:acc) (overflow+1)
+          else return (x:acc)
+
+putMany :: (Binary b) => [b] -> PutM ()
 putMany x = mapM_ put x
 
 -- Lowlevel Types
@@ -134,6 +134,8 @@ instance Binary FieldValue where
             'F' -> do
                 ft <- get :: Get FieldTable
                 return $ FVFieldTable ft
+            _   -> do
+                fail "unknown field type"
     put (FVLongString s)   = put 'S' >> put s
     put (FVSignedInt s)    = put 'I' >> put s
     put (FVDecimalValue s) = put 'D' >> put s
