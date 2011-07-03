@@ -1,17 +1,20 @@
 FRAMING_DATA := Network/AMQP/FramingData.hs
 
-all: framing build
+all: build
 
 framing: $(FRAMING_DATA)
 
-build: dist/setup-config
+build: dist/setup-config framing
 	cabal build
 
 clean:
 	cabal clean
 	rm -f $(FRAMING_DATA)
 
-.PHONY: all framing clean
+test: build
+	runhaskell Test/Simple.hs
+
+.PHONY: all framing clean test
 
 dist/setup-config: amqp.cabal
 	cabal configure
