@@ -19,5 +19,5 @@ test: build
 dist/setup-config: amqp.cabal
 	cabal configure
 
-$(FRAMING_DATA): Codegen/Codegen.hs Codegen/amqp0-8.xml
+$(FRAMING_DATA): Codegen/Codegen.hs Codegen/amqp0-9-1.xml
 	runhaskell $+ > /tmp/Framing.hs && cp /tmp/Framing.hs $@
