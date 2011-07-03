@@ -20,11 +20,9 @@ main = do
   let parsed = parseXML spec
   let !(Elem e) = parsed !! 2
 
-  -- read domains
-  let domains = findChildren (unqual "domain") e
-
   --map from domainName => type
-  let domainMap = M.fromList $ map readDomain domains
+  let domainMap = M.fromList . map readDomain $
+                  findChildren (unqual "domain") e
 
   -- read classes
   let classes = map readClass $ findChildren (unqual "class") e :: [Class]

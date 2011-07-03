@@ -118,20 +118,15 @@ import qualified Data.Map as M
 import qualified Data.IntMap as IM
 import qualified Data.ByteString.Char8 as BS
 import qualified Data.ByteString.Lazy.Char8 as BL
-import Data.IORef
 import Data.Maybe
-import Data.Int
-
 
 import Control.Concurrent
 import Control.Monad
 import qualified Control.Exception as CE
 
-
 import Network.BSD
-import Network.Socket 
+import Network.Socket
 import qualified Network.Socket.ByteString as NB
-
 
 import Network.AMQP.Protocol
 import Network.AMQP.Types
@@ -182,20 +177,19 @@ declareExchange chan exchg = do
         (exchangeAutoDelete exchg)  -- auto_delete
         (exchangeInternal exchg) -- internal
         False -- nowait
-        (FieldTable (M.fromList [])))) -- arguments 
-    return ()      
-    
-    
+        (FieldTable (M.fromList [])))) -- arguments
+    return ()
+
 -- | deletes the exchange with the provided name
-deleteExchange :: Channel -> String -> IO ()    
-deleteExchange chan exchangeName = do    
+deleteExchange :: Channel -> String -> IO ()
+deleteExchange chan myExchangeName = do
     (SimpleMethod Exchange_delete_ok) <- request chan (SimpleMethod (Exchange_delete
         1 -- ticket; ignored by rabbitMQ
-        (ShortString exchangeName) -- exchange
+        (ShortString myExchangeName) -- exchange
         False -- if_unused;  If set, the server will only delete the exchange if it has no queue bindings.
         False -- nowait
-        )) 
-    return ()    
+        ))
+    return ()
 
 ----- QUEUE -----
 
@@ -232,38 +226,38 @@ declareQueue chan queue = do
             (queueAutoDelete queue) 
             False -- no-wait; true means no answer from server
             (FieldTable (M.fromList []))))
-    
+
     return (qName, fromIntegral messageCount, fromIntegral consumerCount)
 
 -- | @bindQueue chan queueName exchangeName routingKey@ binds the queue to the exchange using the provided routing key
-bindQueue :: Channel -> String -> String -> String -> IO ()  
-bindQueue chan queueName exchangeName routingKey = do
+bindQueue :: Channel -> String -> String -> String -> IO ()
+bindQueue chan myQueueName myExchangeName routingKey = do
     (SimpleMethod Queue_bind_ok) <- request chan (SimpleMethod (Queue_bind
         1 -- ticket; ignored by rabbitMQ
-        (ShortString queueName)
-        (ShortString exchangeName)
+        (ShortString myQueueName)
+        (ShortString myExchangeName)
         (ShortString routingKey)
         False -- nowait
-        (FieldTable (M.fromList [])))) -- arguments 
+        (FieldTable (M.fromList [])))) -- arguments
 
     return ()
 
--- | remove all messages from the queue; returns the number of messages that were in the queue       
-purgeQueue :: Channel -> String -> IO Word32    
-purgeQueue chan queueName = do
+-- | remove all messages from the queue; returns the number of messages that were in the queue
+purgeQueue :: Channel -> String -> IO Word32
+purgeQueue chan myQueueName = do
     (SimpleMethod (Queue_purge_ok msgCount)) <- request chan $ (SimpleMethod (Queue_purge
         1 -- ticket
-        (ShortString queueName) -- queue
+        (ShortString myQueueName) -- queue
         False -- nowait
         ))
     return msgCount
 
 -- | deletes the queue; returns the number of messages that were in the queue before deletion
 deleteQueue :: Channel -> String -> IO Word32
-deleteQueue chan queueName = do
+deleteQueue chan myQueueName = do
     (SimpleMethod (Queue_delete_ok msgCount)) <- request chan $ (SimpleMethod (Queue_delete
         1 -- ticket
-        (ShortString queueName) -- queue
+        (ShortString myQueueName) -- queue
         False -- if_unused
         False -- if_empty
         False -- nowait
@@ -271,8 +265,8 @@ deleteQueue chan queueName = do
 
     return msgCount
 
-    
------ MSG (the BASIC class in AMQP) -----    
+
+----- MSG (the BASIC class in AMQP) -----
 
 type ConsumerTag = String
 
@@ -287,29 +281,29 @@ ackToBool NoAck = True
 --
 -- NOTE: The callback will be run on the same thread as the channel thread (every channel spawns its own thread to listen for incoming data) so DO NOT perform any request on @chan@ inside the callback (however, you CAN perform requests on other open channels inside the callback, though I wouldn't recommend it).
 -- Functions that can safely be called on @chan@ are 'ackMsg', 'ackEnv', 'rejectMsg', 'recoverMsgs'. If you want to perform anything more complex, it's a good idea to wrap it inside 'forkIO'.
-consumeMsgs :: Channel -> String -> Ack -> ((Message,Envelope) -> IO ()) -> IO ConsumerTag 
-consumeMsgs chan queueName ack callback = do
+consumeMsgs :: Channel -> String -> Ack -> ((Message,Envelope) -> IO ()) -> IO ConsumerTag
+consumeMsgs chan myQueueName ack callback = do
     --generate a new consumer tag
     newConsumerTag <- (liftM show) $ modifyMVar (lastConsumerTag chan) $ \c -> return (c+1,c+1)
-    
+
     --register the consumer
     modifyMVar_ (consumers chan) $ \c -> return $ M.insert newConsumerTag callback c
-    
+
     writeAssembly chan (SimpleMethod $ Basic_consume
         1 -- ticket
-        (ShortString queueName) -- queue
+        (ShortString myQueueName) -- queue
         (ShortString newConsumerTag) -- consumer_tag
         False -- no_local; If the no-local field is set the server will not send messages to the client that published them.
         (ackToBool ack) -- no_ack
         False -- exclusive; Request exclusive consumer access, meaning only this consumer can access the queue.
-        True -- nowait                     
+        True -- nowait
         )
     return newConsumerTag
 
 -- | stops a consumer that was started with 'consumeMsgs'
 cancelConsumer :: Channel -> ConsumerTag -> IO ()
 cancelConsumer chan consumerTag = do
-    (SimpleMethod (Basic_cancel_ok consumerTag')) <- request chan $ (SimpleMethod (Basic_cancel
+    (SimpleMethod (Basic_cancel_ok _)) <- request chan $ (SimpleMethod (Basic_cancel
         (ShortString consumerTag) -- consumer_tag
         False -- nowait
         ))
@@ -319,17 +313,17 @@ cancelConsumer chan consumerTag = do
 
 
 -- | @publishMsg chan exchangeName routingKey msg@ publishes @msg@ to the exchange with the provided @exchangeName@. The effect of @routingKey@ depends on the type of the exchange
--- 
+--
 -- NOTE: This method may temporarily block if the AMQP server requested us to stop sending content data (using the flow control mechanism). So don't rely on this method returning immediately
 publishMsg :: Channel -> String -> String -> Message -> IO ()
-publishMsg chan exchangeName routingKey msg = do
+publishMsg chan myExchangeName routingKey msg = do
     writeAssembly chan (ContentMethod (Basic_publish
             1 -- ticket; ignored by rabbitMQ
-            (ShortString exchangeName)
+            (ShortString myExchangeName)
             (ShortString routingKey)
             False -- mandatory; if true, the server might return the msg, which is currently not handled
             False) --immediate; if true, the server might return the msg, which is currently not handled
-            
+
             --TODO: add more of these to 'Message'
             (CHBasic
             (fmap ShortString $ msgContentType msg)
@@ -354,21 +348,21 @@ publishMsg chan exchangeName routingKey msg = do
 
 -- | @getMsg chan ack queueName@ gets a message from the specified queue. If @ack=='Ack'@, you have to call 'ackMsg' or 'ackEnv' for any message that you get, otherwise it might be delivered again in the future (by calling 'recoverMsgs')
 getMsg :: Channel -> Ack -> String -> IO (Maybe (Message, Envelope))
-getMsg chan ack queueName = do
+getMsg chan ack myQueueName = do
     ret <- request chan (SimpleMethod (Basic_get
         1 -- ticket
-        (ShortString queueName) -- queue
+        (ShortString myQueueName) -- queue
         (ackToBool ack) -- no_ack
         ))
 
     case ret of
-        ContentMethod (Basic_get_ok deliveryTag redelivered (ShortString exchangeName) (ShortString routingKey) msgCount) properties msgBody ->
-            return $ Just $ (msgFromContentHeaderProperties properties msgBody, 
-                             Envelope {envDeliveryTag = deliveryTag, envRedelivered = redelivered, 
-                             envExchangeName = exchangeName, envRoutingKey = routingKey, envChannel = chan})
+        ContentMethod (Basic_get_ok deliveryTag redelivered (ShortString myExchangeName) (ShortString routingKey) _) properties myMsgBody ->
+            return $ Just $ (msgFromContentHeaderProperties properties myMsgBody,
+                             Envelope {envDeliveryTag = deliveryTag, envRedelivered = redelivered,
+                             envExchangeName = myExchangeName, envRoutingKey = routingKey, envChannel = chan})
         _ -> return Nothing
-    
-    
+
+
 {- | @ackMsg chan deliveryTag multiple@ acknowledges one or more messages.
 
 if @multiple==True@, the @deliverTag@ is treated as \"up to and including\", so that the client can acknowledge multiple messages with a single method call. If @multiple==False@, @deliveryTag@ refers to a single message. 
@@ -460,19 +454,19 @@ data Envelope = Envelope
                 envRoutingKey :: String,
                 envChannel :: Channel
               }
-              
 
 data DeliveryMode = Persistent -- ^ the message will survive server restarts (if the queue is durable)
                   | NonPersistent -- ^ the message may be lost after server restarts
     deriving Show
 
+deliveryModeToInt :: (Num a) => DeliveryMode -> a
 deliveryModeToInt NonPersistent = 1
-deliveryModeToInt Persistent = 2   
+deliveryModeToInt Persistent = 2
 
+intToDeliveryMode :: (Num a) => a -> DeliveryMode
 intToDeliveryMode 1 = NonPersistent
 intToDeliveryMode 2 = Persistent
 
-              
 -- | An AMQP message
 data Message = Message {
                 msgBody :: BL.ByteString, -- ^ the content of your message
@@ -514,19 +508,19 @@ readAssembly chan = do
 collectContent :: Chan FramePayload -> IO (ContentHeaderProperties, BL.ByteString)
 collectContent chan = do
     (ContentHeaderPayload _ _ bodySize props) <- readChan chan
-    
+
     content <- collect $ fromIntegral bodySize
     return (props, BL.concat content)
-  where 
+  where
     collect x | x <= 0 = return []
-    collect rem = do
+    collect remData = do
         (ContentBodyPayload payload) <- readChan chan
-        r <- collect (rem - (BL.length payload))
+        r <- collect (remData - (BL.length payload))
         return $ payload : r
 
 
 
------------- CONNECTION -------------------    
+------------ CONNECTION -------------------
 
 {- general concept:
 Each connection has its own thread. Each channel has its own thread.
@@ -547,23 +541,23 @@ data Connection = Connection {
                     connClosedHandlers :: MVar [IO ()],
                     lastChannelID :: MVar Int --for auto-incrementing the channelIDs
                 }
-                    
-                    
--- | reads incoming frames from socket and forwards them to the opened channels        
+
+
+-- | reads incoming frames from socket and forwards them to the opened channels
 connectionReceiver :: Connection -> IO ()
 connectionReceiver conn = do
     (Frame chanID payload) <- readFrameSock (connSocket conn) (connMaxFrameSize conn)
     forwardToChannel chanID payload
     connectionReceiver conn
   where
-       
+
     forwardToChannel 0 (MethodPayload Connection_close_ok) = do
-        modifyMVar_ (connClosed conn) $ \x -> return $ Just "closed by user"
+        modifyMVar_ (connClosed conn) $ \_ -> return $ Just "closed by user"
         killThread =<< myThreadId
-        
-    
+
+
     forwardToChannel 0 (MethodPayload (Connection_close _ (ShortString errorMsg) _ _ )) = do
-        modifyMVar_ (connClosed conn) $ \x -> return $ Just errorMsg
+        modifyMVar_ (connClosed conn) $ \_ -> return $ Just errorMsg
  
         killThread =<< myThreadId
     
@@ -598,15 +592,15 @@ openConnection' host port vhost loginName loginPassword = do
         BPut.putWord8 1 --TCP/IP
         BPut.putWord8 9 --Major Version
         BPut.putWord8 1 --Minor Version
-        
-    
+
+
     -- S: connection.start
-    Frame 0 (MethodPayload (Connection_start version_major version_minor server_properties mechanisms locales)) <- readFrameSock sock 4096
+    Frame 0 (MethodPayload (Connection_start _ _ _ _ _)) <- readFrameSock sock 4096
 
     -- C: start_ok
     writeFrameSock sock start_ok
     -- S: tune
-    Frame 0 (MethodPayload (Connection_tune channel_max frame_max heartbeat)) <- readFrameSock sock 4096
+    Frame 0 (MethodPayload (Connection_tune _ frame_max _)) <- readFrameSock sock 4096
     -- C: tune_ok
     let maxFrameSize = (min 131072 frame_max)
 
@@ -620,35 +614,35 @@ openConnection' host port vhost loginName loginPassword = do
     -- S: open_ok
     Frame 0 (MethodPayload (Connection_open_ok _)) <- readFrameSock sock $ fromIntegral maxFrameSize
 
-    -- Connection established!    
+    -- Connection established!
 
     --build Connection object
-    connChannels <- newMVar IM.empty
+    myConnChannels <- newMVar IM.empty
     lastChanID <- newMVar 0
     cClosed <- newMVar Nothing
     writeLock <- newMVar ()
     ccl <- newEmptyMVar
-    connClosedHandlers <- newMVar []
-    let conn = Connection sock connChannels (fromIntegral maxFrameSize) cClosed ccl writeLock connClosedHandlers lastChanID
-    
+    myConnClosedHandlers <- newMVar []
+    let conn = Connection sock myConnChannels (fromIntegral maxFrameSize) cClosed ccl writeLock myConnClosedHandlers lastChanID
+
     --spawn the connectionReceiver
     forkIO $ CE.finally (connectionReceiver conn) 
             (do 
                 -- try closing socket
-                CE.catch (sClose sock) (\(e::CE.SomeException) -> return ())
+                CE.catch (sClose sock) (\(_::CE.SomeException) -> return ())
                 
                 -- mark as closed
                 modifyMVar_ cClosed $ \x -> return $ Just $ maybe "closed" id x
                 
                 --kill all channel-threads
-                withMVar connChannels $ \cc -> mapM_ (\c -> killThread $ snd c) $ IM.elems cc
-                withMVar connChannels $ \cc -> return $ IM.empty
+                withMVar myConnChannels $ \cc -> mapM_ (\c -> killThread $ snd c) $ IM.elems cc
+                withMVar myConnChannels $ \_ -> return $ IM.empty
                 
                 -- mark connection as closed, so all pending calls to 'closeConnection' can now return
                 tryPutMVar ccl ()
                 
                 -- notify connection-close-handlers
-                withMVar connClosedHandlers sequence
+                withMVar myConnClosedHandlers sequence
                 
                 )
 
@@ -680,7 +674,7 @@ closeConnection c = do
             0 -- method_id
             )))
             )
-        (\ (e::CE.IOException) -> do
+        (\ (_::CE.IOException) -> do
             --do nothing if connection is already closed
             return ()
         ) 
@@ -706,11 +700,11 @@ addConnectionClosedHandler conn ifClosed handler = do
 
     
 readFrameSock :: Socket -> Int -> IO Frame
-readFrameSock sock maxFrameSize = do
+readFrameSock sock _ = do
     dat <- recvExact 7
     let len = fromIntegral $ peekFrameSize dat
     dat' <- recvExact (len+1) -- +1 for the terminating 0xCE
-    let (frame, rest, consumedBytes) = runGetState get (BL.append dat dat') 0
+    let (frame, _, consumedBytes) = runGetState get (BL.append dat dat') 0
 
 
     if consumedBytes /= fromIntegral (len+8)
@@ -722,7 +716,7 @@ readFrameSock sock maxFrameSize = do
     recvExact bytes = do
         b <- recvExact' bytes $ BL.empty
         if BL.length b /= fromIntegral bytes
-            then error $ "recvExact wanted "++show bytes++" bytes; got "++show (fromIntegral $ BL.length b)++" bytes"
+            then error $ "recvExact wanted "++show bytes++" bytes; got "++show (BL.length b)++" bytes"
             else return b
     recvExact' bytes buf = do
         dat <- NB.recv sock bytes
@@ -764,16 +758,16 @@ data Channel = Channel {
                 
 
 msgFromContentHeaderProperties :: ContentHeaderProperties -> BL.ByteString -> Message
-msgFromContentHeaderProperties 
-    (CHBasic content_type content_encoding headers delivery_mode priority correlation_id reply_to expiration
-             message_id timestamp typ user_id app_id cluster_id) msgBody = 
+msgFromContentHeaderProperties
+    (CHBasic content_type _ _ delivery_mode _ correlation_id reply_to _
+             message_id timestamp _ _ _ _) myMsgBody =
     let msgId = fromShortString message_id
         contentType = fromShortString content_type
         replyTo = fromShortString reply_to
         correlationID = fromShortString correlation_id
         
         in
-            Message msgBody (fmap intToDeliveryMode delivery_mode) timestamp msgId contentType replyTo correlationID
+            Message myMsgBody (fmap intToDeliveryMode delivery_mode) timestamp msgId contentType replyTo correlationID
   where
     fromShortString (Just (ShortString s)) = Just s
     fromShortString _ = Nothing
@@ -806,25 +800,25 @@ channelReceiver chan = do
     isResponse _ = True
     
     --Basic.Deliver: forward msg to registered consumer
-    handleAsync (ContentMethod (Basic_deliver (ShortString consumerTag) deliveryTag redelivered (ShortString exchangeName)
+    handleAsync (ContentMethod (Basic_deliver (ShortString consumerTag) deliveryTag redelivered (ShortString myExchangeName)
                                                 (ShortString routingKey)) 
-                                properties msgBody) =
+                                properties myMsgBody) =
         withMVar (consumers chan) (\s -> do
             case M.lookup consumerTag s of
                 Just subscriber -> do
-                    let msg = msgFromContentHeaderProperties properties msgBody
+                    let msg = msgFromContentHeaderProperties properties myMsgBody
                     let env =  Envelope {envDeliveryTag = deliveryTag, envRedelivered = redelivered,
-                                    envExchangeName = exchangeName, envRoutingKey = routingKey, envChannel = chan}
+                                    envExchangeName = myExchangeName, envRoutingKey = routingKey, envChannel = chan}
 
                     subscriber (msg, env)
                 Nothing ->
                     -- got a message, but have no registered subscriber; so drop it
                     return ()
             )
-            
-    handleAsync (SimpleMethod (Channel_close errorNum (ShortString errorMsg) _ _)) = do
-        
-        modifyMVar_ (chanClosed chan) $ \x -> return $ Just errorMsg
+
+    handleAsync (SimpleMethod (Channel_close _ (ShortString errorMsg) _ _)) = do
+
+        modifyMVar_ (chanClosed chan) $ \_ -> return $ Just errorMsg
         closeChannel' chan
         killThread =<< myThreadId
         
@@ -837,15 +831,13 @@ channelReceiver chan = do
     
            
     --Basic.return
-    handleAsync (ContentMethod (Basic_return replyCode replyText exchange routingKey) properties msgData) =
+    handleAsync (ContentMethod (Basic_return _ _ _ _) _ _) =
         --TODO: implement handling
         -- this won't be called currently, because publishMsg sets "mandatory" and "immediate" to false
         print "BASIC.RETURN not implemented" 
 
-
-        
-        
--- closes the channel internally; but doesn't tell the server        
+-- closes the channel internally; but doesn't tell the server
+closeChannel' :: Channel -> IO ()
 closeChannel' c = do
     modifyMVar_ (connChannels $ connection c) $ \old -> return $ IM.delete (fromIntegral $ channelID c) old
     -- mark channel as closed
@@ -873,17 +865,17 @@ openChannel :: Connection -> IO Channel
 openChannel c = do
     newInQueue <- newChan
     outRes <- newChan
-    lastConsumerTag <- newMVar 0
+    myLastConsumerTag <- newMVar 0
     ca <- newLock
 
-    chanClosed <- newMVar Nothing
-    consumers <- newMVar M.empty 
+    myChanClosed <- newMVar Nothing
+    myConsumers <- newMVar M.empty 
     
     --get a new unused channelID
     newChannelID <- modifyMVar (lastChannelID c) $ \x -> return (x+1,x+1)
     
-    let newChannel = Channel c newInQueue outRes (fromIntegral newChannelID) lastConsumerTag ca chanClosed consumers 
-    
+    let newChannel = Channel c newInQueue outRes (fromIntegral newChannelID) myLastConsumerTag ca myChanClosed myConsumers
+
 
     thrID <- forkIO $ CE.finally (channelReceiver newChannel)
         (closeChannel' newChannel)
@@ -908,7 +900,7 @@ writeFrames chan payloads =
                         -- ensure at most one thread is writing to the socket at any time
                         (withMVar (connWriteLock conn) $ \_ -> 
                             mapM_ (\payload -> writeFrameSock (connSocket conn) (Frame (channelID chan) payload)) payloads)
-                        ( \(e :: CE.IOException) -> do
+                        ( \(_ :: CE.IOException) -> do
                             CE.throwIO $ userError "connection not open"
                         )
                 else do
@@ -958,9 +950,9 @@ writeAssembly chan m =
     CE.catches
         (writeAssembly' chan m)
         
-        [CE.Handler (\ (ex :: AMQPException) -> throwMostRelevantAMQPException chan),
-         CE.Handler (\ (ex :: CE.ErrorCall) -> throwMostRelevantAMQPException chan),
-         CE.Handler (\ (ex :: CE.IOException) -> throwMostRelevantAMQPException chan)]
+        [CE.Handler (\ (_ :: AMQPException) -> throwMostRelevantAMQPException chan),
+         CE.Handler (\ (_ :: CE.ErrorCall) -> throwMostRelevantAMQPException chan),
+         CE.Handler (\ (_ :: CE.IOException) -> throwMostRelevantAMQPException chan)]
    
    
 
@@ -981,12 +973,13 @@ request chan m = do
             !r <- takeMVar res
             return r
             )
-        [CE.Handler (\ (ex :: AMQPException) -> throwMostRelevantAMQPException chan),
-         CE.Handler (\ (ex :: CE.ErrorCall) -> throwMostRelevantAMQPException chan),
-         CE.Handler (\ (ex :: CE.IOException) -> throwMostRelevantAMQPException chan)]
+        [CE.Handler (\ (_ :: AMQPException) -> throwMostRelevantAMQPException chan),
+         CE.Handler (\ (_ :: CE.ErrorCall) -> throwMostRelevantAMQPException chan),
+         CE.Handler (\ (_ :: CE.IOException) -> throwMostRelevantAMQPException chan)]
 
 -- this throws an AMQPException based on the status of the connection and the channel
 -- if both connection and channel are closed, it will throw a ConnectionClosedException
+throwMostRelevantAMQPException :: Channel -> IO b
 throwMostRelevantAMQPException chan = do
     cc <- readMVar $ connClosed $ connection chan
     case cc of
