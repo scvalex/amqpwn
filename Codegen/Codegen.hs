@@ -39,12 +39,6 @@ main = do
                      , "domainMap :: DomainMap"
                      , printf "domainMap = %s" (show domainMap) ]
 
-fixFieldName "type" = "typ"
-fixFieldName s = map f s
-    where
-        f ' ' = '_'
-        f x = x
-
 ---- contentheader class ids -----
 readDomain d =
     let (Just domainName) = lookupAttr (unqual "name") $ elAttribs d
