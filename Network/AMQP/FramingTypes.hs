@@ -107,6 +107,9 @@ condPut _ = return ()
 mkMethodName :: String -> String -> String
 mkMethodName cNam nam= printf "%s_%s" (fixClassName cNam) (fixMethodName nam)
 
+appAll :: ExpQ -> [ExpQ] -> ExpQ
+appAll = foldl appE
+
 genContentHeaderProperties :: (Monad m) => DomainMap -> [Class] -> m [Dec]
 genContentHeaderProperties domainMap classes =
     return [DataD [] (mkName "ContentHeaderProperties") []
@@ -119,7 +122,7 @@ genContentHeaderProperties domainMap classes =
 
 genClassIDFuns :: (Monad m) => [Class] -> m [Dec]
 genClassIDFuns classes =
-    return [FunD (mkName "getGlassIDOf") (map mkClause classes)]
+    return [FunD (mkName "getClassIDOf") (map mkClause classes)]
         where
           mkClause (Class nam index _ _) =
               Clause [RecP (chClassName nam) []]
@@ -160,7 +163,6 @@ genGetContentHeaderProperties classes = do
                                  (if null vs
                                   then conE nam
                                   else appAll (conE nam) (map varE vs'))
-                appAll = foldl appE
 
 genPutContentHeaderProperties :: (Quasi m) => [Class] -> m [Dec]
 genPutContentHeaderProperties classes = do
@@ -181,9 +183,10 @@ genPutContentHeaderProperties classes = do
 genMethodPayloadBinaryInstance :: (Quasi m) => DomainMap -> [Class] -> m [Dec]
 genMethodPayloadBinaryInstance domainMap classes = do
   p <- runQ mkPut
+  g <- runQ mkGet
   return [InstanceD []
           (AppT (ConT $ mkName "Binary") (ConT $ mkName "MethodPayload"))
-          [p]]
+          [p, g]]
       where
         mkPut = funD (mkName "put") (concatMap mkClassClause classes)
         mkClassClause (Class nam index methods _) =
@@ -201,3 +204,28 @@ genMethodPayloadBinaryInstance domainMap classes = do
                        $(putAll vs) |]
         putAll [] = [| return () |]
         putAll (v:vs) = [| put $(varE v) >> $(putAll vs) |]
+
+        mkGet :: DecQ
+        mkGet = funD (mkName "get") [clause [] mkGetBody []]
+        mkGetBody = do
+          clsId <- newName "classID"
+          mthdId <- newName "methodID"
+          normalB $ doE [ bindS (varP clsId) [|getWord16be|]
+                        , bindS (varP mthdId) [|getWord16be|]
+                        , noBindS $ caseE [|($(varE clsId), $(varE mthdId))|]
+                                          (concatMap mkClassMatches classes) ]
+        mkClassMatches (Class nam index methods _) =
+            map (mkMatch nam index) methods
+        mkMatch clsNam clsIdx (Method nam index fields) =
+            match (tupP $ map (litP . integerL . fromIntegral)
+                              [clsIdx, index])
+                  (mkMatchBody clsNam nam fields)
+                  []
+        mkMatchBody clsNam mthdNam fields = do
+          vs <- replicateM (length fields) (newName "x")
+          normalB $ getAll vs vs
+            where
+              getAll vs [] = [| return $(appAll (conE . mkName $
+                                              mkMethodName clsNam mthdNam)
+                                             (map varE vs)) |]
+              getAll vs (w:ws) = [| get >>= $(lamE [varP w] (getAll vs ws)) |]

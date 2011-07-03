@@ -29,11 +29,6 @@ main = do
   -- read classes
   let classes = map readClass $ findChildren (unqual "class") e :: [Class]
 
-  -- generate binary instances for data-type
-  let binaryGetInst = concat $ map ("\t"++) $
-                      concatMap (writeBinaryGetInstForClass domainMap)
-                      classes
-
   putStrLn "module Network.AMQP.FramingData where\n\
            \\n\
            \import Network.AMQP.FramingTypes\n\
@@ -43,63 +38,12 @@ main = do
                      , printf "classes = %s" (listShow classes)
                      , "domainMap :: DomainMap"
                      , printf "domainMap = %s" (show domainMap) ]
-  {-putStrLn $ unlines [ "instance Binary MethodPayload where"
-                     , binaryPutInst -- put instances
-                     -- get instances
-                     , "\tget = do"
-                     , "\t\tclassID <- getWord16be"
-                     , "\t\tmethodID <- getWord16be"
-                     , "\t\tcase (classID, methodID) of"
-                     ]-}
 
 fixFieldName "type" = "typ"
 fixFieldName s = map f s
     where
         f ' ' = '_'
         f x = x
-
----- binary get instance ----
-
-writeBinaryGetInstForClass :: DomainMap -> Class -> [String]
-writeBinaryGetInstForClass domainMap (Class nam index methods _) =
-    map (writeBinaryGetInstForMethod domainMap nam index) methods
-
-writeBinaryGetInstForMethod :: DomainMap -> String -> Int -> Method -> String
-writeBinaryGetInstForMethod domainMap className classIndex (Method nam index fields) =
-    let fullName = (fixClassName className) ++ "_"++(fixMethodName nam)
-    in --binary instances
-      "\t" ++ (writeBinaryGetInstance domainMap fullName classIndex index fields)
-
-writeBinaryGetInstance :: DomainMap -> String -> Int -> Int -> [Field] -> String
-writeBinaryGetInstance domainMap fullName classIndex methodIndex fields =
-    "\t(" ++ (show classIndex) ++ "," ++ (show methodIndex) ++ ") -> " ++
-    getDef ++ "\n"
-        where
-          manyLetters = map (:[]) ['a'..'z']
-
-          fieldTypes :: [(String,String)] --(a..z, fieldType)
-          fieldTypes = zip manyLetters $ map (fieldType domainMap) fields
-
-          --consecutive BITS have to be merged into a Word8
-          --TODO: more than 8 bits have to be split into several Word8
-          grouped :: [ [(String, String)] ]
-          grouped = L.groupBy (\(_,x) (_,y) -> x == "bit" && y == "bit")
-                    fieldTypes
-
-          --concatMap (\x -> " get >>= \\"++x++" ->") (take (length fields) manyLetters)
-
-          showBlob xs | length xs == 1 = "get >>= \\" ++ (fst $ xs !! 0) ++
-                                        " -> "
-          showBlob xs = "getBits " ++ (show $ length xs) ++ " >>= \\[" ++
-                        (concat $ L.intersperse "," $ map fst xs) ++ "] -> "
-
-          getStmt = concatMap showBlob grouped
-
-          getDef =
-              let wrap = if (length fields) /= 0 then ("("++) . (++")") else id
-              in  getStmt ++ " return " ++
-                  wrap (fullName ++ concatMap (" "++) (take (length fields)
-                                                       manyLetters))
 
 ---- contentheader class ids -----
 readDomain d =
