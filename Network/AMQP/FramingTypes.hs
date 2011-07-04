@@ -84,6 +84,7 @@ mkField domainMap f df@(DomainField _ _) =
     (NotStrict, f $ ConT $ mkName $ translateType
                          $ fieldType domainMap df)
 
+-- FIXME add 'his' todos here
 getPropBits :: Integer -> Get [Bit]
 getPropBits num = getWord16be >>= \x -> return $ getPropBits' num 0 x
     where
