@@ -1,11 +1,15 @@
-module Network.AMQP.Types
-    ( Octet, Bit
-    , ChannelID
-    , PayloadSize
-    , ShortInt, LongInt, LongLongInt, ShortString(..), LongString(..)
-    , Timestamp
-    , FieldTable(..), FieldValue(..)
-    , Decimals, DecimalValue(..)
+module Network.AMQP.Types (
+        -- * AMQP low-level types
+        Octet, Bit, ShortInt, LongInt, LongLongInt, ShortString(..), LongString(..),
+
+        -- * AMQP abstract types
+        ChannelID, PayloadSize, Timestamp
+
+        -- * FieldTable
+        , FieldTable(..), FieldValue(..)
+
+        -- * Decimals
+        , Decimals, DecimalValue(..)
     ) where
 
 import Data.Binary
@@ -17,29 +21,9 @@ import Data.Char
 import Data.Int
 import qualified Data.Map as M
 
--- performs runGet on a bytestring until the string is empty
-readMany :: (Show t, Binary t) => BL.ByteString -> [t]
-readMany str = runGet (readMany' [] 0) str
-    where
-      readMany' :: (Binary t) => [t] -> Integer -> Get [t]
-      readMany' _ 1000 = error "readMany overflow"
-      readMany' acc overflow = do
-        x <- get
-        r <- remaining
-        if r > 0
-          then readMany' (x:acc) (overflow+1)
-          else return (x:acc)
-
-putMany :: (Binary b) => [b] -> PutM ()
-putMany x = mapM_ put x
-
--- Lowlevel Types
+-- AMQP low-level types
 type Octet = Word8
 type Bit = Bool
-
-type ChannelID = ShortInt
-type PayloadSize = LongInt
-
 type ShortInt = Word16
 type LongInt = Word32
 type LongLongInt = Word64
@@ -67,9 +51,13 @@ instance Binary LongString where
         putWord32be $ fromIntegral (length x)
         putByteString (BS.pack x)
 
+-- AMQP abstract types
+type ChannelID = ShortInt
+type PayloadSize = LongInt
 type Timestamp = LongLongInt
 
---- field-table ---
+
+-- Field table
 data FieldTable = FieldTable (M.Map ShortString FieldValue)
     deriving Show
 instance Binary FieldTable where
@@ -89,8 +77,7 @@ instance Binary FieldTable where
         put ((fromIntegral $ BL.length bytes):: LongInt)
         putLazyByteString bytes
 
---- field-value ---
-
+-- Field value
 data FieldValue = FVLongString LongString
                 | FVSignedInt Int32
                 | FVDecimalValue DecimalValue
@@ -125,6 +112,7 @@ instance Binary FieldValue where
     put (FVTimestamp s)    = put 'T' >> put s
     put (FVFieldTable s)   = put 'F' >> put s
 
+-- Decimals
 data DecimalValue = DecimalValue Decimals LongInt
     deriving Show
 instance Binary DecimalValue where
@@ -135,3 +123,22 @@ instance Binary DecimalValue where
     put (DecimalValue a b) = put a >> put b
 
 type Decimals = Octet
+
+-- Helpers
+
+-- | Perform runGet on a ByteString until the string is empty.
+readMany :: (Show t, Binary t) => BL.ByteString -> [t]
+readMany = runGet (readMany' [] 0)
+    where
+      readMany' :: (Binary t) => [t] -> Integer -> Get [t]
+      readMany' _ 1000 = error "readMany overflow"
+      readMany' acc overflow = do
+        x <- get
+        r <- remaining
+        if r > 0
+          then readMany' (x:acc) (overflow+1)
+          else return (x:acc)
+
+-- | Put all elements in the given list.
+putMany :: (Binary b) => [b] -> PutM ()
+putMany = mapM_ put

@@ -14,7 +14,10 @@ clean:
 test: build
 	runhaskell Test/Simple.hs
 
-.PHONY: all framing clean test
+doc: build
+	cabal haddock --internal
+
+.PHONY: all framing clean test doc
 
 dist/setup-config: amqp.cabal
 	cabal configure

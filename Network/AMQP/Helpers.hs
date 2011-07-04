@@ -1,6 +1,9 @@
-module Network.AMQP.Helpers
-    ( toStrict, toLazy
-    , Lock, newLock, openLock, closeLock, waitLock, killLock
+module Network.AMQP.Helpers (
+        -- * ByteString manipulation
+        toStrict, toLazy,
+
+        -- * Locks, etc.
+        Lock, newLock, openLock, closeLock, waitLock, killLock
     ) where
 
 import Control.Applicative ( Applicative(..), (<$>) )
@@ -16,9 +19,9 @@ toStrict x = BS.concat $ BL.toChunks x
 toLazy :: BS.ByteString -> BL.ByteString
 toLazy x = BL.fromChunks [x]
 
--- If the lock is open, calls to waitLock will immediately return.  If
--- it is closed, calls to waitLock will block.  If the lock is killed,
--- it will always be open and can't be closed anymore.
+-- | If the lock is open, calls to waitLock will immediately return.
+-- If it is closed, calls to waitLock will block.  If the lock is
+-- killed, it will always be open and can't be closed anymore.
 data Lock = Lock (MVar Bool) (MVar ())
 
 -- | Create an (alive, open) lock.

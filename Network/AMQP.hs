@@ -289,14 +289,14 @@ consumeMsgs chan myQueueName ack callback = do
     --register the consumer
     modifyMVar_ (consumers chan) $ \c -> return $ M.insert newConsumerTag callback c
 
-    writeAssembly chan (SimpleMethod $ Basic_consume
+    writeAssembly chan (SimpleMethod $ undefined{-Basic_consume
         1 -- ticket
         (ShortString myQueueName) -- queue
         (ShortString newConsumerTag) -- consumer_tag
         False -- no_local; If the no-local field is set the server will not send messages to the client that published them.
         (ackToBool ack) -- no_ack
         False -- exclusive; Request exclusive consumer access, meaning only this consumer can access the queue.
-        True -- nowait
+        True -- nowait -}
         )
     return newConsumerTag
 
@@ -883,7 +883,7 @@ openChannel c = do
     --add new channel to connection's channel map
     modifyMVar_ (connChannels c) (\oldMap -> return $ IM.insert newChannelID (newChannel, thrID) oldMap)
      
-    (SimpleMethod Channel_open_ok) <- request newChannel (SimpleMethod (Channel_open (ShortString "")))
+    (SimpleMethod (Channel_open_ok _)) <- request newChannel (SimpleMethod (Channel_open (ShortString "")))
     return newChannel        
 
   
