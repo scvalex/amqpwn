@@ -1,12 +1,16 @@
 {-# LANGUAGE TemplateHaskell #-}
 
-module Network.AMQP.FramingTypes
-    ( Class(..), Method(..), Field(..), DomainMap
-    , genClassIDFuns, genContentHeaderProperties, genMethodPayload
-    , genGetContentHeaderProperties, genPutContentHeaderProperties
-    , genMethodPayloadBinaryInstance
-    , getPropBits, putPropBits, condGet, condPut
-    , listShow, fixClassName, fixMethodName, translateType, fieldType
+module Network.AMQP.FramingTypes (
+        -- * Codegen XML types
+        Class(..), Method(..), Field(..), DomainMap,
+
+        -- * Code-generation functions
+        genClassIDFuns, genContentHeaderProperties, genMethodPayload,
+        genGetContentHeaderProperties, genPutContentHeaderProperties,
+        genMethodPayloadBinaryInstance,
+
+        -- * Helpers for the generated code
+        getPropBits, putPropBits, condGet, condPut
     ) where
 
 import Control.Monad ( replicateM )
@@ -15,35 +19,36 @@ import Data.Binary.Get ( Get, getWord16be )
 import Data.Binary.Put ( Put, putWord16be )
 import Data.Bits
 import Data.Char
-import qualified Data.List as L
 import qualified Data.Map as M
 import Data.Maybe ( isJust )
 import Data.Word ( Word16 )
 import Language.Haskell.TH
 import Language.Haskell.TH.Syntax ( Quasi )
+import Network.AMQP.Types ( Bit )
 import Text.Printf ( printf )
 
-import Network.AMQP.Types ( Bit )
+-- Codegen XML types
 
+-- | A class read from the spec XML.
 data Class = Class String Int [Method] [Field]
              -- ^ className, classID, methods, content-fields
            deriving ( Show )
 
+-- | A class method read from the spec XML.
 data Method = Method String Int [Field]
               -- ^methodName, methodID, fields
               deriving ( Show )
 
+-- | A method field read from the spec XML.
 data Field = TypeField String String   -- ^fieldName, fieldType
            | DomainField String String -- ^fieldName, domainName
              deriving ( Show )
 
+-- | Used to map AMQP types to Haskell types.
 type DomainMap = M.Map String String
 
 chClassName :: String -> Name
 chClassName name = mkName $ "CH" ++ (fixClassName name)
-
-listShow :: (Show a) => [a] -> String
-listShow cs = "[" ++ (L.intercalate ", " $ map show cs) ++ "]"
 
 fixClassName :: String -> String
 fixClassName s = (toUpper $ head s):(tail s)
@@ -54,6 +59,7 @@ fixMethodName = map f
       f '-' = '_'
       f x   = x
 
+-- FIXME: Don't forget to update this.
 translateType :: String -> String
 translateType "octet" = "Octet"
 translateType "longstr" = "LongString"

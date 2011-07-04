@@ -63,3 +63,7 @@ readField f =
     in case (fieldType, fieldDomain) of
          (Just t, _) -> TypeField fieldName t
          (_, Just d) -> DomainField fieldName d
+
+-- Helpers
+listShow :: (Show a) => [a] -> String
+listShow cs = "[" ++ (L.intercalate ", " $ map show cs) ++ "]"

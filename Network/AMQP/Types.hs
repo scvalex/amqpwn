@@ -1,15 +1,16 @@
 module Network.AMQP.Types (
         -- * AMQP low-level types
-        Octet, Bit, ShortInt, LongInt, LongLongInt, ShortString(..), LongString(..),
+        Octet, Bit, ShortInt, LongInt, LongLongInt,
+        ShortString(..), LongString(..),
 
         -- * AMQP abstract types
-        ChannelID, PayloadSize, Timestamp
+        ChannelID, PayloadSize, Timestamp,
 
         -- * FieldTable
-        , FieldTable(..), FieldValue(..)
+        FieldTable(..), FieldValue(..),
 
         -- * Decimals
-        , Decimals, DecimalValue(..)
+        Decimals, DecimalValue(..)
     ) where
 
 import Data.Binary
@@ -110,6 +111,7 @@ data FieldValue = FVLongString LongString
 --   * 'V' ->  Void v
 --   * 'x' ->  Byte array v
 -- See librabbitmq/amqp.h and src/rabbit_binary_generator.erl for details.
+-- FIXME: also update the table in FramingTypes
 
 instance Binary FieldValue where
     get = do
