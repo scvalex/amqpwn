@@ -5,19 +5,32 @@ Description:         Client library for AMQP servers (currently only RabbitMQ)
 License:             BSD3
 Stability:           alpha
 License-file:        LICENSE
-Author:              Holger Reinhardt
+Author:              Holger Reinhardt, Alexandru Scvortov
 Category:            Network
-Maintainer:          Holger Reinhardt <hreinhardt@gmail.com>
+Maintainer:          Alexandru Scvortov <scvalex@gmail.com>
 Build-Type:          Simple
-Homepage:            https://github.com/hreinhardt/amqp
-Cabal-Version:       >=1.2
+Homepage:            https://github.com/scvalex/amqp
+Cabal-Version:       >=1.6
+
 Extra-source-files:  examples/ExampleConsumer.hs,
-                     examples/ExampleProducer.hs
+                     examples/ExampleProducer.hs,
+                     Codegen/Codegen.hs,
+                     Test/Simple.hs
+
+Data-files:          Codegen/amqp0-9-1.xml,
+                     Makefile,
+                     README.md
+
+Source-repository    head
+  Type:              git
+  Location:          git://github.com/scvalex/amqp.git
+
 
 Library
   Build-Depends:      base >= 4, binary, containers, bytestring, network,
                       template-haskell
-  ghc-options:        -O2 -Wall -fno-warn-unused-do-bind -fno-warn-incomplete-patterns
+  ghc-options:        -Wall -fno-warn-unused-do-bind -fno-warn-incomplete-patterns
   Exposed-modules:    Network.AMQP, Network.AMQP.Types
-  Other-modules:      Network.AMQP.Framing, Network.AMQP.Helpers, Network.AMQP.Protocol
+  Other-modules:      Network.AMQP.Framing, Network.AMQP.Helpers,
+                      Network.AMQP.Protocol, Network.AMQP.FramingTypes
 
