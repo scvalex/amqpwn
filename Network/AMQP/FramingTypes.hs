@@ -47,19 +47,24 @@ data Field = TypeField String String   -- ^fieldName, fieldType
 -- | Used to map AMQP types to Haskell types.
 type DomainMap = M.Map String String
 
+-- | Return the CH* datatype constructor name for the given class
+-- name.
 chClassName :: String -> Name
 chClassName name = mkName $ "CH" ++ (fixClassName name)
 
+-- | Convert an AMQP class name to a Haskell one by capitalizing it.
 fixClassName :: String -> String
 fixClassName s = (toUpper $ head s):(tail s)
 
+-- | Convert an AMQP method name to a Haskell one by replacing
+-- underscores with dashes.
 fixMethodName :: String -> String
-fixMethodName = map f
-    where
-      f '-' = '_'
-      f x   = x
+fixMethodName = map (\c -> if c == '-' then '_' else c)
 
 -- FIXME: Don't forget to update this.
+
+-- | Convert an AMQP type into the equivalent Haskell type defined in
+-- "Network.AMQP.Types".
 translateType :: String -> String
 translateType "octet" = "Octet"
 translateType "longstr" = "LongString"
@@ -72,11 +77,14 @@ translateType "longlong" = "LongLongInt"
 translateType "timestamp" = "Timestamp"
 translateType x = error x
 
+-- | Return the type of an AMQP type (itself, basically) or of a
+-- domain.
 fieldType :: DomainMap -> Field -> String
 fieldType _ (TypeField _ x) = x
 fieldType domainMap (DomainField _ domain) =
     let (Just v) = M.lookup domain domainMap in v
 
+-- | Make Template Haskell Field of of an AMQP Field.
 mkField :: DomainMap -> (Type -> Type) -> Field -> (Strict, Type)
 mkField _ f (TypeField _ typ) =
     (NotStrict, f $ ConT $ mkName $ translateType typ)
@@ -85,6 +93,8 @@ mkField domainMap f df@(DomainField _ _) =
                          $ fieldType domainMap df)
 
 -- FIXME add 'his' todos here
+
+-- | Get 16 bits.
 getPropBits :: Integer -> Get [Bit]
 getPropBits num = getWord16be >>= \x -> return $ getPropBits' num 0 x
     where
@@ -93,11 +103,12 @@ getPropBits num = getWord16be >>= \x -> return $ getPropBits' num 0 x
       getPropBits' n offset x =
           ((x .&. (2^(15-offset))) /= 0) : (getPropBits' (n-1) (offset+1) x)
 
+-- | Only get if the parameter is True.
 condGet :: (Binary b) => Bool -> Get (Maybe b)
 condGet False = return Nothing
 condGet True = get >>= \x -> return $ Just x
 
--- | Packs up to 15 Bits into a Word16 (=Property Flags)
+-- | Put 16 bits.
 putPropBits :: [Bit] -> Put
 putPropBits xs = putWord16be $ (putPropBits' 0 xs)
     where
@@ -107,13 +118,17 @@ putPropBits xs = putWord16be $ (putPropBits' 0 xs)
       toInt True = 1
       toInt False = 0
 
+-- | Only put Justs, ignoring Nothings.
 condPut :: (Binary b) => (Maybe b) -> Put
 condPut (Just x) = put x
 condPut _ = return ()
 
+-- | Make a method name by concatenating the AMQP class and method
+-- names.  This is actually used to name data-type constructors.
 mkMethodName :: String -> String -> String
 mkMethodName cNam nam= printf "%s_%s" (fixClassName cNam) (fixMethodName nam)
 
+-- | Use this to create chains of lambdas and their ilk.
 appAll :: ExpQ -> [ExpQ] -> ExpQ
 appAll = foldl appE
 
