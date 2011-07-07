@@ -495,7 +495,7 @@ readAssembly chan = do
     m <- readChan chan
     case m of 
         MethodPayload p -> --got a method frame
-            if hasContent m 
+            if methodHasContent m 
                 then do
                     --several frames containing the content will follow, so read them
                     (props, msg) <- collectContent chan
