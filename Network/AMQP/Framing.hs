@@ -2,7 +2,10 @@
 
 {-# LANGUAGE TemplateHaskell #-}
 
-module Network.AMQP.Framing where
+module Network.AMQP.Framing (
+        ContentHeaderProperties(..), MethodPayload(..),
+        getClassIDOf, getContentHeaderProperties, putContentHeaderProperties
+    ) where
 
 import Network.AMQP.FramingData
 import Network.AMQP.FramingTypes
