@@ -132,6 +132,7 @@ mkMethodName cNam nam= printf "%s_%s" (fixClassName cNam) (fixMethodName nam)
 appAll :: ExpQ -> [ExpQ] -> ExpQ
 appAll = foldl appE
 
+-- | Generate the 'ContentHeaderProperties' data-type.
 genContentHeaderProperties :: (Monad m) => DomainMap -> [Class] -> m [Dec]
 genContentHeaderProperties domainMap classes =
     return [DataD [] (mkName "ContentHeaderProperties") []
@@ -142,6 +143,7 @@ genContentHeaderProperties domainMap classes =
                       (map (mkField domainMap maybeF) fields)
           maybeF = AppT (ConT $ mkName "Maybe")
 
+-- | Generate the 'getClassIDOf' function.
 genClassIDFuns :: (Monad m) => [Class] -> m [Dec]
 genClassIDFuns classes =
     return [FunD (mkName "getClassIDOf") (map mkClause classes)]
@@ -151,6 +153,7 @@ genClassIDFuns classes =
                      (NormalB (LitE (IntegerL (fromIntegral index))))
                      []
 
+-- | Generate the 'MethodPayload' data-type.
 genMethodPayload :: (Monad m) => DomainMap -> [Class] -> m [Dec]
 genMethodPayload domainMap classes =
     return [DataD [] (mkName "MethodPayload") []
@@ -162,6 +165,7 @@ genMethodPayload domainMap classes =
               let fullName = mkName $ mkMethodName clsNam nam
               in NormalC fullName (map (mkField domainMap id) fields)
 
+-- | Generate the 'getContentHeaderProperties' function.
 genGetContentHeaderProperties :: (Quasi m) => [Class] -> m [Dec]
 genGetContentHeaderProperties classes = do
   clauses <- mapM (runQ . mkClause) classes
@@ -186,6 +190,7 @@ genGetContentHeaderProperties classes = do
                                   then conE nam
                                   else appAll (conE nam) (map varE vs'))
 
+-- | Generate the 'putContentHeaderProperties' function.
 genPutContentHeaderProperties :: (Quasi m) => [Class] -> m [Dec]
 genPutContentHeaderProperties classes = do
   clauses <- mapM (runQ . mkClause) classes
@@ -202,6 +207,7 @@ genPutContentHeaderProperties classes = do
         condPuts [] = [|return ()|]
         condPuts (v:vs) = [| condPut $(varE v) >> $(condPuts vs) |]
 
+-- | Generate the 'MethodPayload' 'Binary' instance.
 genMethodPayloadBinaryInstance :: (Quasi m) => DomainMap -> [Class] -> m [Dec]
 genMethodPayloadBinaryInstance domainMap classes = do
   p <- runQ mkPut
