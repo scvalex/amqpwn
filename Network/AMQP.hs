@@ -46,18 +46,12 @@ Some function calls can make the AMQP server throw an AMQP exception, which has 
 
 -}
 module Network.AMQP (
+    Network.AMQP.Connection(..),
+    Network.AMQP.Channel(..),
 
-    -- * Connection
-    Connection,
-    openConnection,
-    openConnection',
-    closeConnection,
-    addConnectionClosedHandler,
-   
     -- * Channel
-    Channel,
     openChannel,
-    
+
     -- * Exchanges
     ExchangeOpts(..),
     newExchange,
@@ -74,7 +68,6 @@ module Network.AMQP (
     
     
     -- * Messaging
-    Message(..),
     DeliveryMode(..),
     newMsg,
     Envelope(..),
@@ -101,11 +94,6 @@ module Network.AMQP (
     
     -- * Exceptions
     AMQPException(..)
-    
-    
-    
-    
- 
 ) where
 
 
@@ -128,10 +116,12 @@ import Network.BSD
 import Network.Socket
 import qualified Network.Socket.ByteString as NB
 
+import Network.AMQP.Channel
+import Network.AMQP.Connection
+import Network.AMQP.Framing
+import Network.AMQP.Helpers
 import Network.AMQP.Protocol
 import Network.AMQP.Types
-import Network.AMQP.Helpers
-import Network.AMQP.Framing
 
 
 
@@ -440,55 +430,7 @@ flow chan active = do
     (SimpleMethod (Channel_flow_ok _)) <- request chan $ SimpleMethod (Channel_flow active)
     return ()
 
-   
-
-   
--------------------------- MESSAGE / ENVELOPE ------------------
-   
--- | contains meta-information of a delivered message (through 'getMsg' or 'consumeMsgs')
-data Envelope = Envelope 
-              {
-                envDeliveryTag :: LongLongInt,
-                envRedelivered :: Bool, 
-                envExchangeName :: String,
-                envRoutingKey :: String,
-                envChannel :: Channel
-              }
-
-data DeliveryMode = Persistent -- ^ the message will survive server restarts (if the queue is durable)
-                  | NonPersistent -- ^ the message may be lost after server restarts
-    deriving Show
-
-deliveryModeToInt :: (Num a) => DeliveryMode -> a
-deliveryModeToInt NonPersistent = 1
-deliveryModeToInt Persistent = 2
-
-intToDeliveryMode :: (Num a) => a -> DeliveryMode
-intToDeliveryMode 1 = NonPersistent
-intToDeliveryMode 2 = Persistent
-
--- | An AMQP message
-data Message = Message {
-                msgBody :: BL.ByteString, -- ^ the content of your message
-                msgDeliveryMode :: Maybe DeliveryMode, -- ^ see 'DeliveryMode'
-                msgTimestamp :: Maybe Timestamp, -- ^ use in any way you like; this doesn't affect the way the message is handled
-                msgID :: Maybe String, -- ^ use in any way you like; this doesn't affect the way the message is handled
-                msgContentType :: Maybe String,
-                msgReplyTo :: Maybe String,
-                msgCorrelationID :: Maybe String
-                }
-    deriving Show
-
--- | a 'Msg' with defaults set; you should override at least 'msgBody'
-newMsg :: Message    
-newMsg = Message (BL.empty) Nothing Nothing Nothing Nothing Nothing Nothing
-
 ------------- ASSEMBLY -------------------------    
--- an assembly is a higher-level object consisting of several frames (like in amqp 0-10)
-data Assembly = SimpleMethod MethodPayload
-              | ContentMethod MethodPayload ContentHeaderProperties BL.ByteString --method, properties, content-data
-    deriving Show
-              
 -- | reads all frames necessary to build an assembly              
 readAssembly :: Chan FramePayload -> IO Assembly
 readAssembly chan = do
@@ -520,185 +462,6 @@ collectContent chan = do
 
 
 
------------- CONNECTION -------------------
-
-{- general concept:
-Each connection has its own thread. Each channel has its own thread.
-Connection reads data from socket and forwards it to channel. Channel processes data and forwards it to application.
-Outgoing data is written directly onto the socket.
-
-Incoming Data: Socket -> Connection-Thread -> Channel-Thread -> Application
-Outgoing Data: Application -> Socket
--}
-
-data Connection = Connection {
-                    connSocket :: Socket,
-                    connChannels :: (MVar (IM.IntMap (Channel, ThreadId))), --open channels (channelID => (Channel, ChannelThread))
-                    connMaxFrameSize :: Int, --negotiated maximum frame size
-                    connClosed :: MVar (Maybe String),
-                    connClosedLock :: MVar (), -- used by closeConnection to block until connection-close handshake is complete
-                    connWriteLock :: MVar (), -- to ensure atomic writes to the socket
-                    connClosedHandlers :: MVar [IO ()],
-                    lastChannelID :: MVar Int --for auto-incrementing the channelIDs
-                }
-
-
--- | reads incoming frames from socket and forwards them to the opened channels
-connectionReceiver :: Connection -> IO ()
-connectionReceiver conn = do
-    (Frame chanID payload) <- readFrameSock (connSocket conn) (connMaxFrameSize conn)
-    forwardToChannel chanID payload
-    connectionReceiver conn
-  where
-
-    forwardToChannel 0 (MethodPayload Connection_close_ok) = do
-        modifyMVar_ (connClosed conn) $ \_ -> return $ Just "closed by user"
-        killThread =<< myThreadId
-
-
-    forwardToChannel 0 (MethodPayload (Connection_close _ (ShortString errorMsg) _ _ )) = do
-        modifyMVar_ (connClosed conn) $ \_ -> return $ Just errorMsg
- 
-        killThread =<< myThreadId
-    
-    forwardToChannel 0 payload = print $ "Got unexpected msg on channel zero: "++(show payload)
-   
-    forwardToChannel chanID payload = do 
-        --got asynchronous msg => forward to registered channel
-        withMVar (connChannels conn) $ \cs -> do
-            case IM.lookup (fromIntegral chanID) cs of
-                Just c -> writeChan (inQueue $ fst c) payload
-                Nothing -> print $ "ERROR: channel not open "++(show chanID)
-
-                
--- | @openConnection hostname virtualHost loginName loginPassword@ opens a connection to an AMQP server running on @hostname@.
--- @virtualHost@ is used as a namespace for AMQP resources (default is \"/\"), so different applications could use multiple virtual hosts on the same AMQP server
---
--- NOTE: If the login name, password or virtual host are invalid, this method will throw a 'ConnectionClosedException'. The exception will not contain a reason why the connection was closed, so you'll have to find out yourself.
-openConnection :: String -> String -> String -> String -> IO Connection           
-openConnection host vhost loginName loginPassword =
-  openConnection' host 5672 vhost loginName loginPassword
-
--- | same as 'openConnection' but allows you to specify a non-default port-number as the 2nd parameter  
-openConnection' :: String -> PortNumber -> String -> String -> String -> IO Connection
-openConnection' host port vhost loginName loginPassword = do
-    proto <- getProtocolNumber "tcp"
-    sock <- socket AF_INET Stream proto
-    addr <- inet_addr host
-    connect sock (SockAddrInet port addr)
-    NB.send sock $ toStrict $ BPut.runPut $ do
-        BPut.putByteString $ BS.pack "AMQP"
-        BPut.putWord8 1
-        BPut.putWord8 1 --TCP/IP
-        BPut.putWord8 9 --Major Version
-        BPut.putWord8 1 --Minor Version
-
-
-    -- S: connection.start
-    Frame 0 (MethodPayload (Connection_start _ _ _ _ _)) <- readFrameSock sock 4096
-
-    -- C: start_ok
-    writeFrameSock sock start_ok
-    -- S: tune
-    Frame 0 (MethodPayload (Connection_tune _ frame_max _)) <- readFrameSock sock 4096
-    -- C: tune_ok
-    let maxFrameSize = (min 131072 frame_max)
-
-    writeFrameSock sock (Frame 0 (MethodPayload 
-        --TODO: handle channel_max
-        (Connection_tune_ok 0 maxFrameSize 0)
-        ))  
-    -- C: open
-    writeFrameSock sock open
-    
-    -- S: open_ok
-    Frame 0 (MethodPayload (Connection_open_ok _)) <- readFrameSock sock $ fromIntegral maxFrameSize
-
-    -- Connection established!
-
-    --build Connection object
-    myConnChannels <- newMVar IM.empty
-    lastChanID <- newMVar 0
-    cClosed <- newMVar Nothing
-    writeLock <- newMVar ()
-    ccl <- newEmptyMVar
-    myConnClosedHandlers <- newMVar []
-    let conn = Connection sock myConnChannels (fromIntegral maxFrameSize) cClosed ccl writeLock myConnClosedHandlers lastChanID
-
-    --spawn the connectionReceiver
-    forkIO $ CE.finally (connectionReceiver conn) 
-            (do 
-                -- try closing socket
-                CE.catch (sClose sock) (\(_::CE.SomeException) -> return ())
-                
-                -- mark as closed
-                modifyMVar_ cClosed $ \x -> return $ Just $ maybe "closed" id x
-                
-                --kill all channel-threads
-                withMVar myConnChannels $ \cc -> mapM_ (\c -> killThread $ snd c) $ IM.elems cc
-                withMVar myConnChannels $ \_ -> return $ IM.empty
-                
-                -- mark connection as closed, so all pending calls to 'closeConnection' can now return
-                tryPutMVar ccl ()
-                
-                -- notify connection-close-handlers
-                withMVar myConnClosedHandlers sequence
-                
-                )
-
-    return conn
-
-  where
-    start_ok = (Frame 0 (MethodPayload (Connection_start_ok  (FieldTable (M.fromList []))
-        (ShortString "AMQPLAIN") 
-        --login has to be a table without first 4 bytes    
-        (LongString (drop 4 $ BL.unpack $ runPut $ put $ FieldTable (M.fromList [(ShortString "LOGIN",FVLongString $ LongString loginName), (ShortString "PASSWORD", FVLongString $ LongString loginPassword)]))) 
-        (ShortString "en_US")) ))    
-    open = (Frame 0 (MethodPayload (Connection_open 
-        (ShortString vhost)  --virtual host
-        (ShortString "")   -- capabilities
-        True)))   --insist; True because we don't support redirect yet
-
-        
-        
-
--- | closes a connection
-closeConnection :: Connection -> IO ()
-closeConnection c = do
-    CE.catch (
-        withMVar (connWriteLock c) $ \_ -> writeFrameSock (connSocket c) $ (Frame 0 (MethodPayload (Connection_close
-            --TODO: set these values
-            0 -- reply_code
-            (ShortString "") -- reply_text
-            0 -- class_id
-            0 -- method_id
-            )))
-            )
-        (\ (_::CE.IOException) -> do
-            --do nothing if connection is already closed
-            return ()
-        ) 
-   
-    -- wait for connection_close_ok by the server; this MVar gets filled in the CE.finally handler in openConnection'
-    readMVar $ connClosedLock c
-    return ()
-    
-
--- | @addConnectionClosedHandler conn ifClosed handler@ adds a @handler@ that will be called after the connection is closed (either by calling @closeConnection@ or by an exception). If the @ifClosed@ parameter is True and the connection is already closed, the handler will be called immediately. If @ifClosed == False@ and the connection is already closed, the handler will never be called
-addConnectionClosedHandler :: Connection -> Bool -> IO () -> IO ()
-addConnectionClosedHandler conn ifClosed handler = do
-    withMVar (connClosed conn) $ \cc -> do
-        case cc of
-            -- connection is already closed, so call the handler directly
-            Just _ | ifClosed == True -> handler
-            
-            -- otherwise add it to the list
-            _ -> modifyMVar_ (connClosedHandlers conn) $ \old -> return $ handler:old
-        
-            
-    
-
-    
 readFrameSock :: Socket -> Int -> IO Frame
 readFrameSock sock _ = do
     dat <- recvExact 7
@@ -744,18 +507,6 @@ writeFrameSock sock x = do
 
 {- | A connection to an AMQP server is made up of separate channels. It is recommended to use a separate channel for each thread in your application that talks to the AMQP server (but you don't have to as channels are thread-safe)
 -}
-data Channel = Channel {
-                    connection :: Connection, 
-                    inQueue :: Chan FramePayload, --incoming frames (from Connection)
-                    outstandingResponses :: Chan (MVar Assembly), -- for every request an MVar is stored here waiting for the response
-                    channelID :: Word16, 
-                    lastConsumerTag :: MVar Int, 
-                    
-                    chanActive :: Lock, -- used for flow-control. if lock is closed, no content methods will be sent
-                    chanClosed :: MVar (Maybe String),
-                    consumers :: MVar (M.Map String ((Message, Envelope) -> IO ())) -- who is consumer of a queue? (consumerTag => callback)
-                }
-                
 
 msgFromContentHeaderProperties :: ContentHeaderProperties -> BL.ByteString -> Message
 msgFromContentHeaderProperties
@@ -858,35 +609,6 @@ closeChannel' c = do
    
     
    
--- | opens a new channel on the connection     
---
--- There's currently no closeChannel method, but you can always just close the connection (the maximum number of channels is 65535).
-openChannel :: Connection -> IO Channel
-openChannel c = do
-    newInQueue <- newChan
-    outRes <- newChan
-    myLastConsumerTag <- newMVar 0
-    ca <- newLock
-
-    myChanClosed <- newMVar Nothing
-    myConsumers <- newMVar M.empty 
-    
-    --get a new unused channelID
-    newChannelID <- modifyMVar (lastChannelID c) $ \x -> return (x+1,x+1)
-    
-    let newChannel = Channel c newInQueue outRes (fromIntegral newChannelID) myLastConsumerTag ca myChanClosed myConsumers
-
-
-    thrID <- forkIO $ CE.finally (channelReceiver newChannel)
-        (closeChannel' newChannel)
-
-    --add new channel to connection's channel map
-    modifyMVar_ (connChannels c) (\oldMap -> return $ IM.insert newChannelID (newChannel, thrID) oldMap)
-     
-    (SimpleMethod (Channel_open_ok _)) <- request newChannel (SimpleMethod (Channel_open (ShortString "")))
-    return newChannel        
-
-  
 
 
 -- | writes multiple frames to the channel atomically

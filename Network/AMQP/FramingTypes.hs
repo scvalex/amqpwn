@@ -24,7 +24,7 @@ import Data.Maybe ( isJust )
 import Data.Word ( Word16 )
 import Language.Haskell.TH
 import Language.Haskell.TH.Syntax ( Quasi )
-import Network.AMQP.Types ( Bit )
+import Network.AMQP.Internal.Types ( Bit )
 import Text.Printf ( printf )
 
 -- Codegen XML types

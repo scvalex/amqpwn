@@ -1,175 +1,91 @@
 module Network.AMQP.Types (
-        -- * AMQP low-level types
-        Octet, Bit, ShortInt, LongInt, LongLongInt,
-        ShortString(..), LongString(..),
-
-        -- * AMQP abstract types
-        ChannelID, PayloadSize, Timestamp,
-
-        -- * FieldTable
-        FieldTable(..), FieldValue(..),
-
-        -- * Decimals
-        Decimals, DecimalValue(..)
+        -- * AMQP high-level types
+        Connection(..), Channel(..),
+        -- * Message/Envelope
+        Assembly(..), Message(..), newMsg, Envelope(..),
+        DeliveryMode(..), deliveryModeToInt, intToDeliveryMode
     ) where
 
-import Data.Binary
-import Data.Binary.Get
-import Data.Binary.Put
-import qualified Data.ByteString.Char8 as BS
-import qualified Data.ByteString.Lazy.Char8 as BL
-import Data.Char
-import Data.Int
+import Control.Concurrent ( MVar, ThreadId, Chan )
+import Data.ByteString.Lazy.Char8 ( ByteString, empty )
+import Data.IntMap ( IntMap )
 import qualified Data.Map as M
+import Data.Word ( Word16 )
+import Network.AMQP.Helpers ( Lock )
+import Network.Socket ( Socket )
+import Network.AMQP.Framing ( MethodPayload, ContentHeaderProperties )
+import Network.AMQP.Internal.Types ( Timestamp, LongLongInt )
+import Network.AMQP.Protocol ( FramePayload(..) )
 
 
--- AMQP low-level types
-type Octet = Word8
-type Bit = Bool
-type ShortInt = Word16
-type LongInt = Word32
-type LongLongInt = Word64
+-- High-level types
 
-newtype ShortString = ShortString String
-    deriving ( Show, Ord, Eq )
+-- | Represents an AMQP connection.
+data Connection = Connection {
+      connSocket :: Socket,
+      connChannels :: (MVar (IntMap (Channel, ThreadId))), --open channels (channelID => (Channel, ChannelThread))
+      connMaxFrameSize :: Int, --negotiated maximum frame size
+      connClosed :: MVar (Maybe String),
+      connClosedLock :: MVar (), -- used by closeConnection to block until connection-close handshake is complete
+      connWriteLock :: MVar (), -- to ensure atomic writes to the socket
+      connClosedHandlers :: MVar [IO ()],
+      lastChannelID :: MVar Int --for auto-incrementing the channelIDs
+    }
 
-instance Binary ShortString where
-    get = do
-      len <- getWord8
-      dat <- getByteString (fromIntegral len)
-      return . ShortString $ BS.unpack dat
-    put (ShortString x) = do
-      let s = BS.pack $ take 255 x --ensure string isn't longer than 255 bytes
-      putWord8 $ fromIntegral (BS.length s)
-      putByteString s
+-- | Represents an AMQP channel.
+data Channel = Channel {
+      connection :: Connection,
+      inQueue :: Chan FramePayload, --incoming frames (from Connection)
+      outstandingResponses :: Chan (MVar Assembly), -- for every request an MVar is stored here waiting for the response
+      channelID :: Word16,
+      lastConsumerTag :: MVar Int,
+      chanActive :: Lock, -- used for flow-control. if lock is closed, no content methods will be sent
+      chanClosed :: MVar (Maybe String),
+      consumers :: MVar (M.Map String ((Message, Envelope) -> IO ())) -- who is consumer of a queue? (consumerTag => callback)
+    }
 
-newtype LongString = LongString String
-    deriving ( Show )
+-- | An assembly is a higher-level object consisting of several frames
+-- (like in amqp 0-10)
+data Assembly = SimpleMethod MethodPayload
+              | ContentMethod MethodPayload ContentHeaderProperties ByteString --method, properties, content-data
+                deriving ( Show )
 
-instance Binary LongString where
-    get = do
-      len <- getWord32be
-      dat <- getByteString (fromIntegral len)
-      return . LongString $ BS.unpack dat
-    put (LongString x) = do
-      putWord32be $ fromIntegral (length x)
-      putByteString (BS.pack x)
+-- Message/Envelope
 
+-- | An AMQP message
+data Message = Message {
+      msgBody :: ByteString, -- ^ the content of your message
+      msgDeliveryMode :: Maybe DeliveryMode, -- ^ see 'DeliveryMode'
+      msgTimestamp :: Maybe Timestamp, -- ^ use in any way you like; this doesn't affect the way the message is handled
+      msgID :: Maybe String, -- ^ use in any way you like; this doesn't affect the way the message is handled
+      msgContentType :: Maybe String,
+      msgReplyTo :: Maybe String,
+      msgCorrelationID :: Maybe String
+    } deriving ( Show )
 
--- AMQP abstract types
-type ChannelID = ShortInt
-type PayloadSize = LongInt
-type Timestamp = LongLongInt
+-- | A new 'Message' with defaults set; you should override at least
+-- 'msgBody'.
+newMsg :: Message
+newMsg = Message empty Nothing Nothing Nothing Nothing Nothing Nothing
 
+-- | Contains meta-information of a delivered message (through
+-- 'getMsg' or 'consumeMsgs').
+data Envelope = Envelope {
+      envDeliveryTag :: LongLongInt,
+      envRedelivered :: Bool,
+      envExchangeName :: String,
+      envRoutingKey :: String,
+      envChannel :: Channel
+    }
 
--- Field table
-data FieldTable = FieldTable (M.Map ShortString FieldValue)
-    deriving Show
-instance Binary FieldTable where
-    get = do
-      len <- get :: Get LongInt --length of fieldValuePairs in bytes
+data DeliveryMode = Persistent -- ^ the message will survive server restarts (if the queue is durable)
+                  | NonPersistent -- ^ the message may be lost after server restarts
+                    deriving ( Show )
 
-      if len > 0
-        then do
-          fvp <- getLazyByteString (fromIntegral len)
-          let !fields = readMany fvp
+deliveryModeToInt :: (Num a) => DeliveryMode -> a
+deliveryModeToInt NonPersistent = 1
+deliveryModeToInt Persistent = 2
 
-          return . FieldTable $ M.fromList fields
-        else do
-          return . FieldTable $ M.empty
-
-    put (FieldTable fvp) = do
-      let bytes = runPut (putMany $ M.toList fvp) :: BL.ByteString
-      put ((fromIntegral $ BL.length bytes) :: LongInt)
-      putLazyByteString bytes
-
--- Field value
-data FieldValue = FVLongString LongString
-                | FVSignedInt Int32
-                | FVDecimalValue DecimalValue
-                | FVTimestamp Timestamp
-                | FVFieldTable FieldTable
-                  deriving ( Show )
-
--- FIXME: this can probably be generated from the spec.
--- In the meantime, here's the complete list:
---   * 't' ->  Boolean v
---   * 'b' ->  Signed 8-bit v
---   * 'B' ->  Unsigned 8-bit x
---   * 's' ->  Signed 16-bit (following RabbitMQ's example) v
---   * 'u' ->  Unsigned 16-bit x
---   * 'I' ->  Signed 32-bit v
---   * 'i' ->  Unsigned 32-bit x
---   * 'l' ->  Signed 64-bit (again, following RabbitMQ's example) v
---   * 'f' ->  32-bit float v
---   * 'd' ->  64-bit float v
---   * 'D' ->  unsigned Decimal v
---   * 'S' ->  Long string v
---   * 'A' ->  Nested Array v
---   * 'T' ->  unsigned Timestamp (u64) v
---   * 'F' ->  Nested Table v
---   * 'V' ->  Void v
---   * 'x' ->  Byte array v
--- See librabbitmq/amqp.h and src/rabbit_binary_generator.erl for details.
--- FIXME: also update the table in FramingTypes
-
-instance Binary FieldValue where
-    get = do
-      fieldType <- getWord8
-      case chr $ fromIntegral fieldType of
-        'S' -> do
-            x <- get :: Get LongString
-            return $ FVLongString x
-        'I' -> do
-            x <- get :: Get Int32 -- FIXME: this should probably take
-                                 -- endianess into accoutn
-            return $ FVSignedInt x
-        'D' -> do
-            x <- get :: Get DecimalValue
-            return $ FVDecimalValue x
-        'T' -> do
-            x <- get :: Get Timestamp
-            return $ FVTimestamp x
-        'F' -> do
-            ft <- get :: Get FieldTable
-            return $ FVFieldTable ft
-        _   -> do
-            fail "unknown field type"
-    put (FVLongString s)   = put 'S' >> put s
-    put (FVSignedInt s)    = put 'I' >> put s
-    put (FVDecimalValue s) = put 'D' >> put s
-    put (FVTimestamp s)    = put 'T' >> put s
-    put (FVFieldTable s)   = put 'F' >> put s
-
-
--- Decimals
-data DecimalValue = DecimalValue Decimals LongInt
-    deriving Show
-instance Binary DecimalValue where
-    get = do
-      a <- getWord8
-      b <- get :: Get LongInt
-      return $ DecimalValue a b
-    put (DecimalValue a b) = put a >> put b
-
-type Decimals = Octet
-
-
--- Helpers
-
--- | Perform runGet on a ByteString until the string is empty.
-readMany :: (Show t, Binary t) => BL.ByteString -> [t]
-readMany = runGet (readMany' [] 0)
-    where
-      readMany' :: (Binary t) => [t] -> Integer -> Get [t]
-      readMany' _ 1000 = error "readMany overflow"
-      readMany' acc overflow = do
-        x <- get
-        r <- remaining
-        if r > 0
-          then readMany' (x:acc) (overflow+1)
-          else return (x:acc)
-
--- | Put all elements in the given list.
-putMany :: (Binary b) => [b] -> PutM ()
-putMany = mapM_ put
+intToDeliveryMode :: (Num a) => a -> DeliveryMode
+intToDeliveryMode 1 = NonPersistent
+intToDeliveryMode 2 = Persistent

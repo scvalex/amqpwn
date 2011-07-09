@@ -9,7 +9,7 @@ module Network.AMQP.Framing (
 
 import Network.AMQP.FramingData
 import Network.AMQP.FramingTypes
-import Network.AMQP.Types
+import Network.AMQP.Internal.Types
 
 import Data.Binary ( Binary(..), Get, Put )
 

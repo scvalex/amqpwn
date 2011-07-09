@@ -8,8 +8,8 @@ import Data.Binary.Get
 import Data.Binary.Put
 import qualified Data.ByteString.Lazy.Char8 as BL
 import Control.Applicative ( Applicative(..), (<$>) )
-import Network.AMQP.Types
 import Network.AMQP.Framing
+import Network.AMQP.Internal.Types
 
 -- | A frame received on a channel
 data Frame = Frame ChannelID FramePayload -- ^ channel, payload
