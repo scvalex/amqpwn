@@ -1,12 +1,17 @@
+{-# LANGUAGE ScopedTypeVariables #-}
+
 module Network.AMQP.Protocol (
         methodHasContent, peekFrameSize, readFrameSock, writeFrameSock,
-        collectContent, msgFromContentHeaderProperties
+        collectContent, msgFromContentHeaderProperties, writeFrames,
+        throwMostRelevantAMQPException
     ) where
 
 import Control.Concurrent ( Chan, readChan )
+import Control.Concurrent.MVar ( withMVar, readMVar )
 import qualified Control.Exception as CE
 import Data.Binary
 import Data.Binary.Get
+import qualified Data.IntMap as IntMap
 import Data.Binary.Put
 import qualified Data.ByteString.Char8 as BS
 import qualified Data.ByteString.Lazy.Char8 as BL
@@ -69,6 +74,22 @@ writeFrameSock sock x = do
   NB.send sock $ toStrict $ runPut $ put x
   return ()
 
+-- | writes multiple frames to the channel atomically
+writeFrames :: Channel -> [FramePayload] -> IO ()
+writeFrames chan payloads =
+    let conn = connection chan
+    in withMVar (connChannels conn) $ \chans ->
+        if IntMap.member (fromIntegral $ channelID chan) chans
+          then CE.catch
+               -- ensure at most one thread is writing to the socket
+               -- at any time
+                   (withMVar (connWriteLock conn) $ \_ ->
+                        mapM_ (\payload -> writeFrameSock (connSocket conn) (Frame (channelID chan) payload)) payloads)
+                   ( \(_ :: CE.IOException) -> do
+                       CE.throwIO $ userError "connection not open")
+          else do
+            CE.throwIO $ userError "channel not open"
+
 -- | reads a contentheader and contentbodies and assembles them
 collectContent :: Chan FramePayload -> IO (ContentHeaderProperties, BL.ByteString)
 collectContent chan = do
@@ -94,3 +115,16 @@ msgFromContentHeaderProperties (CHBasic content_type _ _ delivery_mode _ correla
         where
           fromShortString (Just (ShortString s)) = Just s
           fromShortString _ = Nothing
+
+-- this throws an AMQPException based on the status of the connection and the channel
+-- if both connection and channel are closed, it will throw a ConnectionClosedException
+throwMostRelevantAMQPException :: Channel -> IO b
+throwMostRelevantAMQPException chan = do
+  cc <- readMVar $ connClosed $ connection chan
+  case cc of
+    Just r -> CE.throwIO $ ConnectionClosedException r
+    Nothing -> do
+            chc <- readMVar $ chanClosed chan
+            case chc of
+              Just r -> CE.throwIO $ ChannelClosedException r
+              Nothing -> CE.throwIO $ ConnectionClosedException "unknown reason"

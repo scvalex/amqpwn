@@ -16,22 +16,19 @@ import Control.Concurrent ( forkIO, killThread, myThreadId )
 import Control.Concurrent.Chan ( Chan, newChan, isEmptyChan
                                , writeChan, readChan )
 import Control.Concurrent.MVar ( MVar, newMVar, newEmptyMVar, takeMVar
-                               , modifyMVar, modifyMVar_, readMVar
+                               , modifyMVar, modifyMVar_
                                , putMVar, withMVar, tryPutMVar )
 import qualified Control.Exception as CE
-import Data.ByteString.Lazy.Char8 ( length, take, drop )
-import Data.IntMap ( insert, delete, member )
+import Data.IntMap ( insert, delete )
 import Data.Map ( empty, lookup )
 import Data.Maybe ( isNothing )
-import Network.AMQP.Helpers ( newLock, openLock, closeLock, killLock
-                            , waitLock )
-import Network.AMQP.Protocol ( methodHasContent, collectContent
-                             , writeFrameSock
+import Network.AMQP.Assembly ( readAssembly, writeAssembly, writeAssembly' )
+import Network.AMQP.Helpers ( newLock, openLock, closeLock, killLock )
+import Network.AMQP.Protocol ( throwMostRelevantAMQPException
                              , msgFromContentHeaderProperties )
 import Network.AMQP.Types ( Channel (..), Connection(..), Assembly(..)
                           , MethodPayload(..), ShortString(..), Envelope(..)
-                          , AMQPException, FramePayload(..), getClassIDOf
-                          , AMQPException(..), Frame(..) )
+                          , AMQPException(..) )
 
 -- | opens a new channel on the connection
 --
@@ -173,86 +170,3 @@ request chan m = do
           [ CE.Handler (\ (_ :: AMQPException) -> throwMostRelevantAMQPException chan)
           , CE.Handler (\ (_ :: CE.ErrorCall) -> throwMostRelevantAMQPException chan)
           , CE.Handler (\ (_ :: CE.IOException) -> throwMostRelevantAMQPException chan)]
-
-------------- ASSEMBLY -------------------------
--- | reads all frames necessary to build an assembly
-readAssembly :: Chan FramePayload -> IO Assembly
-readAssembly chan = do
-  m <- readChan chan
-  case m of
-    MethodPayload p -> --got a method frame
-      if methodHasContent m
-        then do
-          --several frames containing the content will follow, so read them
-          (props, msg) <- collectContent chan
-          return $ ContentMethod p props msg
-        else do
-          return $ SimpleMethod p
-    x -> error $ "didn't expect frame: " ++ (show x)
-
-writeAssembly' :: Channel -> Assembly -> IO ()
-writeAssembly' chan (ContentMethod m properties msg) = do
-  -- wait iff the AMQP server instructed us to withhold sending
-  -- content data (flow control)
-  waitLock $ chanActive chan
-  let !toWrite = [ MethodPayload m
-                 , ContentHeaderPayload (getClassIDOf properties) --classID
-                                        0 --weight is deprecated in AMQP 0-9
-                                        (fromIntegral $ length msg) --bodySize
-                                        properties
-                 ] ++
-                 (if length msg > 0
-                    then do
-                      --split into frames of maxFrameSize
-                      map ContentBodyPayload
-                         (splitLen msg (fromIntegral $ connMaxFrameSize $ connection chan))
-                    else [])
-  writeFrames chan toWrite
-      where
-        splitLen str len | length str > len = (take len str):(splitLen (drop len str) len)
-        splitLen str _ = [str]
-
-writeAssembly' chan (SimpleMethod m) = do
-    writeFrames chan [MethodPayload m]
-
--- most exported functions in this module will use either 'writeAssembly' or 'request' to talk to the server
--- so we perform the exception handling here
-
--- | writes an assembly to the channel
-writeAssembly :: Channel -> Assembly -> IO ()
-writeAssembly chan m =
-    CE.catches
-          (writeAssembly' chan m)
-          [ CE.Handler (\ (_ :: AMQPException) -> throwMostRelevantAMQPException chan)
-          , CE.Handler (\ (_ :: CE.ErrorCall) -> throwMostRelevantAMQPException chan)
-          , CE.Handler (\ (_ :: CE.IOException) -> throwMostRelevantAMQPException chan)
-          ]
-
--- this throws an AMQPException based on the status of the connection and the channel
--- if both connection and channel are closed, it will throw a ConnectionClosedException
-throwMostRelevantAMQPException :: Channel -> IO b
-throwMostRelevantAMQPException chan = do
-  cc <- readMVar $ connClosed $ connection chan
-  case cc of
-    Just r -> CE.throwIO $ ConnectionClosedException r
-    Nothing -> do
-            chc <- readMVar $ chanClosed chan
-            case chc of
-              Just r -> CE.throwIO $ ChannelClosedException r
-              Nothing -> CE.throwIO $ ConnectionClosedException "unknown reason"
-
--- | writes multiple frames to the channel atomically
-writeFrames :: Channel -> [FramePayload] -> IO ()
-writeFrames chan payloads =
-    let conn = connection chan
-    in withMVar (connChannels conn) $ \chans ->
-        if member (fromIntegral $ channelID chan) chans
-          then CE.catch
-               -- ensure at most one thread is writing to the socket
-               -- at any time
-                   (withMVar (connWriteLock conn) $ \_ ->
-                        mapM_ (\payload -> writeFrameSock (connSocket conn) (Frame (channelID chan) payload)) payloads)
-                   ( \(_ :: CE.IOException) -> do
-                       CE.throwIO $ userError "connection not open")
-          else do
-            CE.throwIO $ userError "channel not open"
