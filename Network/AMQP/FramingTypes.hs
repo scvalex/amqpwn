@@ -10,7 +10,7 @@ module Network.AMQP.FramingTypes (
         genMethodPayloadBinaryInstance,
 
         -- * Helpers for the generated code
-        getPropBits, putPropBits, condGet, condPut
+        getPropBits, putPropBits, condGet, condPut,
     ) where
 
 import Control.Monad ( replicateM )

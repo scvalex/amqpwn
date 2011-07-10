@@ -1,51 +1,22 @@
 module Network.AMQP.Protocol (
-        Frame(..), FramePayload(..),
-        methodHasContent, peekFrameSize
+        methodHasContent, peekFrameSize, readFrameSock, writeFrameSock,
+        collectContent, msgFromContentHeaderProperties
     ) where
 
+import Control.Concurrent ( Chan, readChan )
+import qualified Control.Exception as CE
 import Data.Binary
 import Data.Binary.Get
 import Data.Binary.Put
+import qualified Data.ByteString.Char8 as BS
 import qualified Data.ByteString.Lazy.Char8 as BL
-import Control.Applicative ( Applicative(..), (<$>) )
+import Network.AMQP.Helpers ( toLazy, toStrict )
 import Network.AMQP.Framing
 import Network.AMQP.Internal.Types
+import Network.AMQP.Types
+import Network.Socket ( Socket )
+import qualified Network.Socket.ByteString as NB
 
--- | A frame received on a channel
-data Frame = Frame ChannelID FramePayload -- ^ channel, payload
-             deriving ( Show )
-
-instance Binary Frame where
-    get = do
-      thisFrameType <- getWord8
-      channelId <- get :: Get ChannelID
-      payloadSize <- get :: Get PayloadSize
-      payload <- getPayload (toEnum $ fromIntegral thisFrameType) payloadSize
-      0xCE <- getWord8           -- frame end
-      return $ Frame channelId payload
-    put (Frame channelId payload) = do
-      putWord8 . fromIntegral $ fromEnum payload
-      put channelId
-      let buf = runPut $ putPayload payload
-      put ((fromIntegral $ BL.length buf) :: PayloadSize)
-      putLazyByteString buf
-      putWord8 0xCE             -- frame end
-
--- | A frame's payload
-data FramePayload = MethodPayload MethodPayload
-                  | ContentHeaderPayload ShortInt ShortInt LongLongInt
-                                         ContentHeaderProperties
-                  -- ^ classID, weight, bodySize, propertyFields
-                  | ContentBodyPayload BL.ByteString
-                    deriving ( Show )
-
-instance Enum FramePayload where
-    fromEnum (MethodPayload _)              = 1
-    fromEnum (ContentHeaderPayload _ _ _ _) = 2
-    fromEnum (ContentBodyPayload _)         = 3
-    toEnum 1 = MethodPayload { }
-    toEnum 2 = ContentHeaderPayload { }
-    toEnum 3 = ContentBodyPayload { }
 
 -- | True if a content (content-header and possibly content-body)
 -- follows this method
@@ -63,25 +34,63 @@ peekFrameSize = runGet $ do
                   get :: Get ChannelID -- 2 bytes
                   return =<< get      -- 4 bytes
 
--- | Get a the given method's payload.
--- FIXME: Fill in the given method rather than building a new one.
-getPayload :: (Integral n) => FramePayload -> n -> Get FramePayload
-getPayload (MethodPayload _) _ = do
-  MethodPayload <$> get
-getPayload (ContentHeaderPayload _ _ _ _) _ = do
-  classID <- get :: Get ShortInt
-  ContentHeaderPayload <$> return classID
-                       <*> get
-                       <*> get
-                       <*> getContentHeaderProperties classID
-getPayload (ContentBodyPayload _) payloadSize = do
-  ContentBodyPayload <$> (getLazyByteString $ fromIntegral payloadSize)
+readFrameSock :: Socket -> Int -> IO Frame
+readFrameSock sock _ = do
+  dat <- recvExact 7
+  let len = fromIntegral $ peekFrameSize dat
+  dat' <- recvExact (len+1) -- +1 for the terminating 0xCE
+  let (frame, _, consumedBytes) = runGetState get (BL.append dat dat') 0
 
--- | Put a frame's payload.
-putPayload :: FramePayload -> Put
-putPayload (MethodPayload payload) =
-    put payload
-putPayload (ContentHeaderPayload classID weight bodySize p) =
-    put classID >> put weight >> put bodySize >> putContentHeaderProperties p
-putPayload (ContentBodyPayload payload) =
-    putLazyByteString payload
+  if consumedBytes /= fromIntegral (len+8)
+    then error $ "readFrameSock: parser should read " ++ show (len + 8) ++
+                 " bytes; but read " ++ show consumedBytes
+    else return ()
+  return frame
+    where
+      recvExact bytes = do
+        b <- recvExact' bytes $ BL.empty
+        if BL.length b /= fromIntegral bytes
+          then error $ "recvExact wanted " ++ show bytes ++
+                       " bytes; got " ++ show (BL.length b) ++ " bytes"
+          else return b
+      recvExact' bytes buf = do
+        dat <- NB.recv sock bytes
+        let len = BS.length dat
+        if len == 0
+          then CE.throwIO $ ConnectionClosedException "recv returned 0 bytes"
+          else do
+            let buf' = BL.append buf (toLazy dat)
+            if len >= bytes
+              then return buf'
+              else recvExact' (bytes-len) buf'
+
+writeFrameSock :: Socket -> Frame -> IO ()
+writeFrameSock sock x = do
+  NB.send sock $ toStrict $ runPut $ put x
+  return ()
+
+-- | reads a contentheader and contentbodies and assembles them
+collectContent :: Chan FramePayload -> IO (ContentHeaderProperties, BL.ByteString)
+collectContent chan = do
+  (ContentHeaderPayload _ _ bodySize props) <- readChan chan
+
+  content <- collect $ fromIntegral bodySize
+  return (props, BL.concat content)
+      where
+        collect x | x <= 0 = return []
+        collect remData = do
+          (ContentBodyPayload payload) <- readChan chan
+          r <- collect (remData - (BL.length payload))
+          return $ payload : r
+
+msgFromContentHeaderProperties :: ContentHeaderProperties -> BL.ByteString
+                               -> Message
+msgFromContentHeaderProperties (CHBasic content_type _ _ delivery_mode _ correlation_id reply_to _ message_id timestamp _ _ _ _) myMsgBody =
+    let msgId = fromShortString message_id
+        contentType = fromShortString content_type
+        replyTo = fromShortString reply_to
+        correlationID = fromShortString correlation_id
+    in Message myMsgBody (fmap intToDeliveryMode delivery_mode) timestamp msgId contentType replyTo correlationID
+        where
+          fromShortString (Just (ShortString s)) = Just s
+          fromShortString _ = Nothing

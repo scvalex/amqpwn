@@ -1,10 +1,34 @@
+{-# LANGUAGE ScopedTypeVariables #-}
+
 module Network.AMQP.Connection (
         Connection,
         openConnection, openConnection',
         closeConnection, addConnectionClosedHandler
     ) where
 
-import Network.AMQP.Types ( Connection(..) )
+import Prelude hiding ( lookup )
+
+import Control.Concurrent ( killThread, myThreadId, forkIO )
+import Control.Concurrent.Chan ( writeChan )
+import Control.Concurrent.MVar ( modifyMVar_, withMVar, newMVar
+                               , newEmptyMVar, tryPutMVar, readMVar )
+import qualified Control.Exception as CE
+import Data.Binary ( Binary(..) )
+import qualified Data.Binary.Put as Put
+import Data.ByteString.Char8 ( pack )
+import Data.ByteString.Lazy.Char8 ( unpack )
+import Data.IntMap ( lookup, empty, elems )
+import qualified Data.Map as Map
+import Network.AMQP.Protocol ( readFrameSock, writeFrameSock )
+import Network.AMQP.Helpers ( toStrict )
+import Network.AMQP.Types ( Connection(..), Frame(..), FramePayload(..)
+                          , ShortString(..), MethodPayload(..), ShortString
+                          , Channel(..), FieldTable(..), LongString(..)
+                          , FieldValue(..) )
+import Network.BSD ( getProtocolNumber )
+import Network.Socket ( socket, PortNumber, Family(..), inet_addr
+                      , SocketType(..), connect, SockAddr(..), sClose )
+import qualified Network.Socket.ByteString as NB
 
 ------------ CONNECTION -------------------
 
@@ -40,7 +64,7 @@ connectionReceiver conn = do
     forwardToChannel chanID payload = do 
         --got asynchronous msg => forward to registered channel
         withMVar (connChannels conn) $ \cs -> do
-            case IM.lookup (fromIntegral chanID) cs of
+            case lookup (fromIntegral chanID) cs of
                 Just c -> writeChan (inQueue $ fst c) payload
                 Nothing -> print $ "ERROR: channel not open "++(show chanID)
 
@@ -67,12 +91,12 @@ openConnection' host port vhost loginName loginPassword = do
   sock <- socket AF_INET Stream proto
   addr <- inet_addr host
   connect sock (SockAddrInet port addr)
-  NB.send sock $ toStrict $ BPut.runPut $ do
-    BPut.putByteString $ BS.pack "AMQP"
-    BPut.putWord8 1
-    BPut.putWord8 1 --TCP/IP
-    BPut.putWord8 9 --Major Version
-    BPut.putWord8 1 --Minor Version
+  NB.send sock $ toStrict $ Put.runPut $ do
+    Put.putByteString $ pack "AMQP"
+    Put.putWord8 1
+    Put.putWord8 1 --TCP/IP
+    Put.putWord8 9 --Major Version
+    Put.putWord8 1 --Minor Version
 
   -- S: connection.start
   Frame 0 (MethodPayload (Connection_start _ _ _ _ _)) <- readFrameSock sock 4096
@@ -95,7 +119,7 @@ openConnection' host port vhost loginName loginPassword = do
   -- Connection established!
 
   --build Connection object
-  myConnChannels <- newMVar IM.empty
+  myConnChannels <- newMVar empty
   lastChanID <- newMVar 0
   cClosed <- newMVar Nothing
   writeLock <- newMVar ()
@@ -114,8 +138,8 @@ openConnection' host port vhost loginName loginPassword = do
 
     --kill all channel-threads
     withMVar myConnChannels $ \cc -> mapM_ (\c -> killThread $ snd c) $
-                                     IM.elems cc
-    withMVar myConnChannels $ \_ -> return $ IM.empty
+                                     elems cc
+    withMVar myConnChannels $ \_ -> return $ empty
 
     -- mark connection as closed, so all pending calls to
     -- 'closeConnection' can now return
@@ -126,10 +150,10 @@ openConnection' host port vhost loginName loginPassword = do
 
   return conn
     where
-      start_ok = (Frame 0 (MethodPayload (Connection_start_ok  (FieldTable (M.fromList []))
+      start_ok = (Frame 0 (MethodPayload (Connection_start_ok  (FieldTable (Map.fromList []))
                                           (ShortString "AMQPLAIN")
         --login has to be a table without first 4 bytes
-        (LongString (drop 4 $ BL.unpack $ runPut $ put $ FieldTable (M.fromList [(ShortString "LOGIN",FVLongString $ LongString loginName), (ShortString "PASSWORD", FVLongString $ LongString loginPassword)])))
+        (LongString (drop 4 $ unpack $ Put.runPut $ put $ FieldTable (Map.fromList [(ShortString "LOGIN",FVLongString $ LongString loginName), (ShortString "PASSWORD", FVLongString $ LongString loginPassword)])))
         (ShortString "en_US")) ))
       open = (Frame 0 (MethodPayload (Connection_open
         (ShortString vhost)  --virtual host
@@ -153,9 +177,9 @@ closeConnection c = do
             return ()
         )
 
-    -- wait for connection_close_ok by the server; this MVar gets filled in the CE.finally handler in openConnection'
-    readMVar $ connClosedLock c
-    return ()
+  -- wait for connection_close_ok by the server; this MVar gets filled in the CE.finally handler in openConnection'
+  readMVar $ connClosedLock c
+  return ()
 
 -- | @addConnectionClosedHandler conn ifClosed handler@ adds a
 -- @handler@ that will be called after the connection is closed

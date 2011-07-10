@@ -1,21 +1,39 @@
+{-# LANGUAGE DeriveDataTypeable #-}
+
 module Network.AMQP.Types (
+        module Network.AMQP.Internal.Types,
+        module Network.AMQP.Framing,
+
         -- * AMQP high-level types
         Connection(..), Channel(..),
+
         -- * Message/Envelope
         Assembly(..), Message(..), newMsg, Envelope(..),
-        DeliveryMode(..), deliveryModeToInt, intToDeliveryMode
+        DeliveryMode(..), deliveryModeToInt, intToDeliveryMode,
+
+        -- * Message payload
+        Frame(..), FramePayload(..),
+
+        -- * AMQP Exceptions
+        AMQPException(..)
     ) where
 
+import Control.Applicative ( Applicative(..), (<$>) )
 import Control.Concurrent ( MVar, ThreadId, Chan )
+import Control.Exception ( Exception )
+import Data.Binary ( Binary(..) )
+import Data.Binary.Get ( Get, getWord8, getLazyByteString )
+import Data.Binary.Put ( Put, runPut, putWord8, putLazyByteString )
 import Data.ByteString.Lazy.Char8 ( ByteString, empty )
+import qualified Data.ByteString.Lazy.Char8 as BL
 import Data.IntMap ( IntMap )
 import qualified Data.Map as M
+import Data.Typeable ( Typeable )
 import Data.Word ( Word16 )
 import Network.AMQP.Helpers ( Lock )
 import Network.Socket ( Socket )
-import Network.AMQP.Framing ( MethodPayload, ContentHeaderProperties )
-import Network.AMQP.Internal.Types ( Timestamp, LongLongInt )
-import Network.AMQP.Protocol ( FramePayload(..) )
+import Network.AMQP.Framing
+import Network.AMQP.Internal.Types
 
 
 -- High-level types
@@ -89,3 +107,74 @@ deliveryModeToInt Persistent = 2
 intToDeliveryMode :: (Num a) => a -> DeliveryMode
 intToDeliveryMode 1 = NonPersistent
 intToDeliveryMode 2 = Persistent
+
+-- Message payload
+
+-- | A frame received on a channel
+data Frame = Frame ChannelID FramePayload -- ^ channel, payload
+             deriving ( Show )
+
+instance Binary Frame where
+    get = do
+      thisFrameType <- getWord8
+      channelId <- get :: Get ChannelID
+      payloadSize <- get :: Get PayloadSize
+      payload <- getPayload (toEnum $ fromIntegral thisFrameType) payloadSize
+      0xCE <- getWord8           -- frame end
+      return $ Frame channelId payload
+    put (Frame channelId payload) = do
+      putWord8 . fromIntegral $ fromEnum payload
+      put channelId
+      let buf = runPut $ putPayload payload
+      put ((fromIntegral $ BL.length buf) :: PayloadSize)
+      putLazyByteString buf
+      putWord8 0xCE             -- frame end
+
+-- | A frame's payload
+data FramePayload = MethodPayload MethodPayload
+                  | ContentHeaderPayload ShortInt ShortInt LongLongInt
+                                         ContentHeaderProperties
+                  -- ^ classID, weight, bodySize, propertyFields
+                  | ContentBodyPayload BL.ByteString
+                    deriving ( Show )
+
+instance Enum FramePayload where
+    fromEnum (MethodPayload _)              = 1
+    fromEnum (ContentHeaderPayload _ _ _ _) = 2
+    fromEnum (ContentBodyPayload _)         = 3
+    toEnum 1 = MethodPayload { }
+    toEnum 2 = ContentHeaderPayload { }
+    toEnum 3 = ContentBodyPayload { }
+
+-- Exceptions
+
+-- | The Exception thrown when soft and hard AQMP error occur.
+data AMQPException = ChannelClosedException String
+                   | ConnectionClosedException String
+                     deriving (Typeable, Show, Ord, Eq)
+
+instance Exception AMQPException
+
+-- Internal Helpers
+-- | Get a the given method's payload.
+-- FIXME: Fill in the given method rather than building a new one.
+getPayload :: (Integral n) => FramePayload -> n -> Get FramePayload
+getPayload (MethodPayload _) _ = do
+  MethodPayload <$> get
+getPayload (ContentHeaderPayload _ _ _ _) _ = do
+  classID <- get :: Get ShortInt
+  ContentHeaderPayload <$> return classID
+                       <*> get
+                       <*> get
+                       <*> getContentHeaderProperties classID
+getPayload (ContentBodyPayload _) payloadSize = do
+  ContentBodyPayload <$> (getLazyByteString $ fromIntegral payloadSize)
+
+-- | Put a frame's payload.
+putPayload :: FramePayload -> Put
+putPayload (MethodPayload payload) =
+    put payload
+putPayload (ContentHeaderPayload classID weight bodySize p) =
+    put classID >> put weight >> put bodySize >> putContentHeaderProperties p
+putPayload (ContentBodyPayload payload) =
+    putLazyByteString payload
