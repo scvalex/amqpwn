@@ -21,6 +21,7 @@ import qualified Data.ByteString.Lazy.Char8 as BL
 import Data.Char
 import Data.Int
 import qualified Data.Map as M
+import Text.Printf ( printf )
 
 
 -- AMQP low-level types
@@ -133,8 +134,8 @@ instance Binary FieldValue where
         'F' -> do
             ft <- get :: Get FieldTable
             return $ FVFieldTable ft
-        _   -> do
-            fail "unknown field type"
+        ef -> do
+            fail $ printf "unknown field type: %s" (show ef)
     put (FVLongString s)   = put 'S' >> put s
     put (FVSignedInt s)    = put 'I' >> put s
     put (FVDecimalValue s) = put 'D' >> put s
