@@ -1,3 +1,4 @@
+import Network.AMQP ( openConnection, closeConnection )
 import System.Exit ( exitFailure )
 import Test.HUnit
 
@@ -13,4 +14,8 @@ main = do
 
 tests = test [ "alwaysPass" ~: TestCase $ do
                  return ()
+             , "connectionOpenClose" ~: TestCase $ do
+                 conn <- openConnection "127.0.0.1" (fromIntegral 5672) "/"
+                                        "guest" "guest"
+                 closeConnection conn
              ]
