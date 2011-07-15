@@ -45,9 +45,9 @@ openChannel c = do
     myConsumers <- newMVar empty
 
     --get a new unused channelID
-    newChannelID <- modifyMVar (lastChannelID c) $ \x -> return (x+1,x+1)
+    newChannelId <- modifyMVar (getLastChannelId c) $ \x -> return (x+1,x+1)
 
-    let newChannel = Channel c newInQueue outRes (fromIntegral newChannelID)
+    let newChannel = Channel c newInQueue outRes (fromIntegral newChannelId)
                              myLastConsumerTag ca myChanClosed myConsumers
 
 
@@ -55,8 +55,8 @@ openChannel c = do
                                  (closeChannel' newChannel)
 
     --add new channel to connection's channel map
-    modifyMVar_ (connChannels c)
-                (\oldMap -> return $ insert newChannelID (newChannel, thrID) oldMap)
+    modifyMVar_ (getChannels c)
+                (\oldMap -> return $ insert newChannelId (newChannel, thrID) oldMap)
 
     (SimpleMethod (Channel_open_ok _)) <- request newChannel (SimpleMethod (Channel_open (ShortString "")))
     return newChannel
@@ -134,7 +134,7 @@ channelReceiver chan = do
 -- closes the channel internally; but doesn't tell the server
 closeChannel' :: Channel -> IO ()
 closeChannel' c = do
-  modifyMVar_ (connChannels $ connection c) $ \old -> return $ delete (fromIntegral $ channelID c) old
+  modifyMVar_ (getChannels $ connection c) $ \old -> return $ delete (fromIntegral $ channelID c) old
   -- mark channel as closed
   modifyMVar_ (chanClosed c) $ \x -> do
     killLock $ chanActive c

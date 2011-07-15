@@ -39,15 +39,24 @@ import Network.AMQP.Internal.Types
 -- High-level types
 
 -- | Represents an AMQP connection.
-data Connection = Connection {
-      connSocket :: Socket,
-      connChannels :: (MVar (IntMap (Channel, ThreadId))), --open channels (channelID => (Channel, ChannelThread))
-      connMaxFrameSize :: Int, --negotiated maximum frame size
-      connClosed :: MVar (Maybe String),
-      connClosedLock :: MVar (), -- used by closeConnection to block until connection-close handshake is complete
-      connWriteLock :: MVar (), -- to ensure atomic writes to the socket
-      connClosedHandlers :: MVar [IO ()],
-      lastChannelID :: MVar Int --for auto-incrementing the channelIDs
+data Connection = Connection
+    { getSocket :: Socket
+      -- ^ connection socket
+    , getChannels :: (MVar (IntMap (Channel, ThreadId)))
+      -- ^ open channels (channelID => (Channel, ChannelThread))
+    , getMaxFrameSize :: Int
+      -- ^ negotiated maximum frame size
+    , getConnClosed :: MVar (Maybe String)
+      -- ^ reason for closure, if closed
+    , getConnClosedLock :: MVar ()
+      -- ^ used by closeConnection to block until connection-close
+      -- handshake is complete
+    , getConnWriteLock :: MVar ()
+      -- ^ to ensure atomic writes to the socket
+    , getConnCloseHandlers :: MVar [IO ()]
+      -- ^ handlers to be notified of connection closures
+    , getLastChannelId :: MVar Int
+      -- ^ for auto-incrementing the channelIDs
     }
 
 -- | Represents an AMQP channel.

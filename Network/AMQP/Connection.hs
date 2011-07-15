@@ -45,19 +45,19 @@ import Text.Printf ( printf )
 -- opened channels.
 connectionReceiver :: Connection -> IO ()
 connectionReceiver conn = do
-    (Frame chanID payload) <- readFrameSock (connSocket conn)
-                                            (connMaxFrameSize conn)
+    (Frame chanID payload) <- readFrameSock (getSocket conn)
+                                            (getMaxFrameSize conn)
     forwardToChannel chanID payload
     connectionReceiver conn
         where
           -- Forward to channel0
           forwardToChannel 0 (MethodPayload Connection_close_ok) = do
-                            modifyMVar_ (connClosed conn) $ \_ ->
+                            modifyMVar_ (getConnClosed conn) $ \_ ->
                                 return $ Just "closed by user"
                             killThread =<< myThreadId
           forwardToChannel 0 (MethodPayload (Connection_close _ s _ _ )) = do
                             let (ShortString errorMsg) = s
-                            modifyMVar_ (connClosed conn) $ \_ ->
+                            modifyMVar_ (getConnClosed conn) $ \_ ->
                                 return $ Just errorMsg
                             killThread =<< myThreadId
           forwardToChannel 0 payload =
@@ -66,7 +66,7 @@ connectionReceiver conn = do
 
           -- Forward asynchronous message to other channels
           forwardToChannel chanID payload =
-              withMVar (connChannels conn) $ \cs ->
+              withMVar (getChannels conn) $ \cs ->
                   case IM.lookup (fromIntegral chanID) cs of
                     Just c -> writeChan (inQueue $ fst c) payload
                     Nothing -> printf "ERROR: channel %d not open" chanID
@@ -116,13 +116,20 @@ openConnection host port vhost username password = do
   -- Connection established!
 
   myConnChannels <- newMVar IM.empty
-  lastChanID <- newMVar 0
   cClosed <- newMVar Nothing
-  writeLock <- newMVar ()
   ccl <- newEmptyMVar
+  writeLock <- newMVar ()
   myConnClosedHandlers <- newMVar []
-  let conn = Connection sock myConnChannels (fromIntegral maxFrameSize)
-                        cClosed ccl writeLock myConnClosedHandlers lastChanID
+  lastChanId <- newMVar 0
+  let conn = Connection { getSocket = sock
+                        , getChannels = myConnChannels
+                        , getMaxFrameSize = fromIntegral maxFrameSize
+                        , getConnClosed = cClosed
+                        , getConnClosedLock = ccl
+                        , getConnWriteLock = writeLock
+                        , getConnCloseHandlers = myConnClosedHandlers
+                        , getLastChannelId = lastChanId
+                        }
 
   -- spawn the connectionReceiver
   forkIO $ CE.finally (connectionReceiver conn) $ do
@@ -165,8 +172,8 @@ openConnection host port vhost username password = do
 closeConnection :: Connection -> IO ()
 closeConnection c = do
   CE.catch (
-     withMVar (connWriteLock c) $ \_ ->
-         writeFrameSock (connSocket c) $
+     withMVar (getConnWriteLock c) $ \_ ->
+         writeFrameSock (getSocket c) $
                             (Frame 0 (MethodPayload (Connection_close
                                                      --TODO: set these values
                                                      0 -- reply_code
@@ -181,7 +188,7 @@ closeConnection c = do
 
   -- wait for connection_close_ok by the server; this MVar gets filled
   -- in the CE.finally handler in openConnection
-  readMVar $ connClosedLock c
+  readMVar $ getConnClosedLock c
   return ()
 
 -- | Add a handler that will be called after the connection is closed
@@ -194,10 +201,10 @@ addConnectionClosedHandler :: Connection -- ^ the connection
                            -> IO ()      -- ^ handler
                            -> IO ()
 addConnectionClosedHandler conn ifClosed handler = do
-  withMVar (connClosed conn) $ \cc ->
+  withMVar (getConnClosed conn) $ \cc ->
       case cc of
         -- connection is already closed, so call the handler directly
         Just _ | ifClosed == True -> handler
         -- otherwise add it to the list
-        _ -> modifyMVar_ (connClosedHandlers conn) $ \old ->
+        _ -> modifyMVar_ (getConnCloseHandlers conn) $ \old ->
               return $ handler:old

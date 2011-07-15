@@ -44,7 +44,7 @@ writeAssembly' chan (ContentMethod m properties msg) = do
                     then do
                       --split into frames of maxFrameSize
                       map ContentBodyPayload
-                         (splitLen msg (fromIntegral $ connMaxFrameSize $ connection chan))
+                         (splitLen msg (fromIntegral $ getMaxFrameSize $ connection chan))
                     else [])
   writeFrames chan toWrite
       where
