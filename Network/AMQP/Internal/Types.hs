@@ -90,6 +90,7 @@ data FieldValue = FVLongString LongString
                 | FVDecimalValue DecimalValue
                 | FVTimestamp Timestamp
                 | FVFieldTable FieldTable
+                | FVBit Bool
                   deriving ( Show )
 
 -- FIXME: this can probably be generated from the spec.
@@ -119,28 +120,32 @@ instance Binary FieldValue where
       fieldType <- getWord8
       case chr $ fromIntegral fieldType of
         'S' -> do
-            x <- get :: Get LongString
-            return $ FVLongString x
+            s <- get :: Get LongString
+            return $ FVLongString s
         'I' -> do
-            x <- get :: Get Int32 -- FIXME: this should probably take
+            i <- get :: Get Int32 -- FIXME: this should probably take
                                  -- endianess into accoutn
-            return $ FVSignedInt x
+            return $ FVSignedInt i
         'D' -> do
-            x <- get :: Get DecimalValue
-            return $ FVDecimalValue x
+            d <- get :: Get DecimalValue
+            return $ FVDecimalValue d
         'T' -> do
-            x <- get :: Get Timestamp
-            return $ FVTimestamp x
+            t <- get :: Get Timestamp
+            return $ FVTimestamp t
         'F' -> do
             ft <- get :: Get FieldTable
             return $ FVFieldTable ft
+        't' -> do
+            b <- get :: Get Bool
+            return $ FVBit b
         ef -> do
             fail $ printf "unknown field type: %s" (show ef)
     put (FVLongString s)   = put 'S' >> put s
-    put (FVSignedInt s)    = put 'I' >> put s
-    put (FVDecimalValue s) = put 'D' >> put s
-    put (FVTimestamp s)    = put 'T' >> put s
-    put (FVFieldTable s)   = put 'F' >> put s
+    put (FVSignedInt i)    = put 'I' >> put i
+    put (FVDecimalValue d) = put 'D' >> put d
+    put (FVTimestamp t)    = put 'T' >> put t
+    put (FVFieldTable t)   = put 'F' >> put t
+    put (FVBit b)          = put 't' >> put b
 
 
 -- Decimals

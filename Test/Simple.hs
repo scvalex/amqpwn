@@ -7,7 +7,7 @@ main = do
   counts <- runTestTT tests
   if (failures counts + errors counts == 0)
      then do
-       putStrLn "All test pass :)"
+       putStrLn "All tests pass :)"
      else do
        putStrLn "Failures or errors occured :'("
        exitFailure
