@@ -29,17 +29,20 @@ import Data.ByteString.Char8 ( pack )
 import Data.ByteString.Lazy.Char8 ( unpack )
 import qualified Data.IntMap as IM
 import qualified Data.Map as Map
+import Data.String ( fromString )
 import Network.AMQP.Protocol ( readFrameSock, writeFrameSock )
 import Network.AMQP.Helpers ( toStrict )
 import Network.AMQP.Types ( Connection(..), Frame(..), FramePayload(..)
                           , ShortString(..), MethodPayload(..), ShortString
-                          , Channel(..), FieldTable(..), LongString(..)
-                          , FieldValue(..) )
+                          , Channel(..), FieldTable(..), LongString(..) )
 import Network.BSD ( getProtocolNumber )
 import Network.Socket ( socket, PortNumber, Family(..), inet_addr
                       , SocketType(..), connect, SockAddr(..), sClose )
 import qualified Network.Socket.ByteString as NB
 import Text.Printf ( printf )
+
+
+data ConnectingState = COpening | CStarting1 | CStarting2 | CTuning
 
 -- | Process: reads incoming frames from socket and forwards them to
 -- opened channels.
@@ -90,46 +93,7 @@ openConnection host port vhost username password = do
   addr <- inet_addr host
   connect sock (SockAddrInet port addr)
 
-  -- C: protocol-header
-  NB.send sock protocolHeader
-
-  -- S: connection.start
-  Frame 0 (MethodPayload (Connection_start _ _ _ _ _)) <-
-      readFrameSock sock 4096
-  -- C: start_ok
-  writeFrameSock sock start_ok
-
-  -- S: tune
-  Frame 0 (MethodPayload (Connection_tune _ frame_max _)) <-
-      readFrameSock sock 4096
-  -- C: tune_ok
-  let maxFrameSize = min 131072 frame_max
-
-  writeFrameSock sock . Frame 0 . MethodPayload
-                      $ Connection_tune_ok 0 maxFrameSize 0
-  -- C: open
-  writeFrameSock sock open
-  -- S: open_ok
-  Frame 0 (MethodPayload (Connection_open_ok _)) <-
-      readFrameSock sock $ fromIntegral maxFrameSize
-
-  -- Connection established!
-
-  myConnChannels <- newMVar IM.empty
-  cClosed <- newMVar Nothing
-  ccl <- newEmptyMVar
-  writeLock <- newMVar ()
-  myConnClosedHandlers <- newMVar []
-  lastChanId <- newMVar 0
-  let conn = Connection { getSocket = sock
-                        , getChannels = myConnChannels
-                        , getMaxFrameSize = fromIntegral maxFrameSize
-                        , getConnClosed = cClosed
-                        , getConnClosedLock = ccl
-                        , getConnWriteLock = writeLock
-                        , getConnCloseHandlers = myConnClosedHandlers
-                        , getLastChannelId = lastChanId
-                        }
+  conn <- doConnectionOpen COpening sock (0 :: Int)
 
   -- spawn the connectionReceiver
   forkIO $ CE.finally (connectionReceiver conn) $ do
@@ -137,31 +101,90 @@ openConnection host port vhost username password = do
     CE.catch (sClose sock) (\(_ :: CE.SomeException) -> return ())
 
     -- mark as closed
-    modifyMVar_ cClosed $ \x -> return . Just $ maybe "closed" id x
+    modifyMVar_ (getConnClosed conn) $ \x -> return . Just $ maybe "closed" id x
 
     -- kill all channel-threads
-    withMVar myConnChannels $ \cc -> mapM_ (\c -> killThread $ snd c) $
+    withMVar (getChannels conn) $ \cc -> mapM_ (\c -> killThread $ snd c) $
                                      IM.elems cc
-    withMVar myConnChannels $ \_ -> return $ IM.empty
+    withMVar (getChannels conn) $ \_ -> return $ IM.empty
 
     -- mark connection as closed, so all pending calls to
     -- 'closeConnection' can now return
-    tryPutMVar ccl ()
+    tryPutMVar (getConnClosedLock conn) ()
 
     -- notify connection-close-handlers
-    withMVar myConnClosedHandlers sequence
+    withMVar (getConnCloseHandlers conn) sequence
 
   return conn
     where
+      doConnectionOpen COpening sock frameMax = do
+        -- C: protocol-header
+        NB.send sock protocolHeader
+        doConnectionOpen CStarting1 sock frameMax
+      doConnectionOpen CStarting1 sock frameMax = do
+          -- S: connection.start
+        frame <- readFrameSock sock 4096
+        case frame of
+          Frame 0 methodPayload ->
+              case methodPayload of
+                (MethodPayload (Connection_start 0 9 _ ms _))
+                                 | "AMQPLAIN" `elem` (words $ show ms) ->
+                    doConnectionOpen CStarting2 sock frameMax
+                _ ->
+                    fail $ printf "unknown connection type: %s"
+                                  (show methodPayload)
+          Frame _ _ ->
+              fail "unexpected frame on non-0 channel"
+      doConnectionOpen CStarting2 sock frameMax = do
+        -- C: start_ok
+        let loginTable = LongString . drop 4 . unpack . Put.runPut . put $
+               FieldTable (Map.fromList [ ( fromString "LOGIN"
+                                          , fromString username)
+                                        , ( fromString "PASSWORD"
+                                          , fromString password)
+                                        ])
+        writeFrameSock sock . Frame 0 . MethodPayload $ Connection_start_ok
+                           (FieldTable (Map.fromList []))
+                           (ShortString "AMQPLAIN")
+                           loginTable
+                           (ShortString "en_US")
+        doConnectionOpen CTuning sock frameMax
+      doConnectionOpen CTuning sock frameMax = do
+        -- S: tune
+        Frame 0 (MethodPayload (Connection_tune _ frame_max _)) <-
+            readFrameSock sock 4096
+        -- C: tune_ok
+        let maxFrameSize = min 131072 frame_max
+
+        writeFrameSock sock . Frame 0 . MethodPayload
+                           $ Connection_tune_ok 0 maxFrameSize 0
+        -- C: open
+        writeFrameSock sock open
+        -- S: open_ok
+        Frame 0 (MethodPayload (Connection_open_ok _)) <-
+            readFrameSock sock $ fromIntegral maxFrameSize
+
+        -- Connection established!
+
+        myConnChannels <- newMVar IM.empty
+        cClosed <- newMVar Nothing
+        ccl <- newEmptyMVar
+        writeLock <- newMVar ()
+        myConnClosedHandlers <- newMVar []
+        lastChanId <- newMVar 0
+        return $ Connection { getSocket = sock
+                            , getChannels = myConnChannels
+                            , getMaxFrameSize = fromIntegral maxFrameSize
+                            , getConnClosed = cClosed
+                            , getConnClosedLock = ccl
+                            , getConnWriteLock = writeLock
+                            , getConnCloseHandlers = myConnClosedHandlers
+                            , getLastChannelId = lastChanId
+                            }
+
       protocolHeader = toStrict $ Put.runPut $ do
                          Put.putByteString $ pack "AMQP"
                          mapM_ Put.putWord8 [0, 0, 9, 1]
-
-      start_ok = (Frame 0 (MethodPayload (Connection_start_ok (FieldTable (Map.fromList []))
-                                          (ShortString "AMQPLAIN")
-        --login has to be a table without first 4 bytes
-        (LongString (drop 4 $ unpack $ Put.runPut $ put $ FieldTable (Map.fromList [(ShortString "LOGIN", FVLongString $ LongString username), (ShortString "PASSWORD", FVLongString $ LongString password)])))
-        (ShortString "en_US")) ))
 
       open = Frame 0  $ MethodPayload (Connection_open
                                        (ShortString vhost) -- virtual host

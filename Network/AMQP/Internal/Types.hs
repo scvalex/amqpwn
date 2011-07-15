@@ -21,6 +21,7 @@ import qualified Data.ByteString.Lazy.Char8 as BL
 import Data.Char
 import Data.Int
 import qualified Data.Map as M
+import Data.String ( IsString(..) )
 import Text.Printf ( printf )
 
 
@@ -32,7 +33,13 @@ type LongInt = Word32
 type LongLongInt = Word64
 
 newtype ShortString = ShortString String
-    deriving ( Show, Ord, Eq )
+    deriving ( Ord, Eq )
+
+instance Show ShortString where
+    show (ShortString s) = s
+
+instance IsString ShortString where
+    fromString = ShortString . take 255
 
 instance Binary ShortString where
     get = do
@@ -45,7 +52,12 @@ instance Binary ShortString where
       putByteString s
 
 newtype LongString = LongString String
-    deriving ( Show )
+
+instance Show LongString where
+    show (LongString s) = s
+
+instance IsString LongString where
+    fromString = LongString
 
 instance Binary LongString where
     get = do
@@ -92,6 +104,9 @@ data FieldValue = FVLongString LongString
                 | FVFieldTable FieldTable
                 | FVBit Bool
                   deriving ( Show )
+
+instance IsString FieldValue where
+    fromString = FVLongString . fromString
 
 -- FIXME: this can probably be generated from the spec.
 -- In the meantime, here's the complete list:
