@@ -77,6 +77,8 @@ connectionReceiver conn = do
 -- method will throw a 'ConnectionClosedException'.  The exception
 -- will not contain a reason why the connection was closed, so you'll
 -- have to find out yourself.
+--
+-- FIXME: use a state machine for login
 openConnection :: String          -- ^ hostname
                -> PortNumber     -- ^ port
                -> String         -- ^ virtual host
@@ -87,9 +89,9 @@ openConnection host port vhost username password = do
   sock <- socket AF_INET Stream =<< getProtocolNumber "tcp"
   addr <- inet_addr host
   connect sock (SockAddrInet port addr)
-  NB.send sock $ toStrict $ Put.runPut $ do
-    Put.putByteString $ pack "AMQP"
-    mapM_ Put.putWord8 [0, 0, 9, 1]
+
+  -- C: protocol-header
+  NB.send sock protocolHeader
 
   -- S: connection.start
   Frame 0 (MethodPayload (Connection_start _ _ _ _ _)) <-
@@ -144,6 +146,10 @@ openConnection host port vhost username password = do
 
   return conn
     where
+      protocolHeader = toStrict $ Put.runPut $ do
+                         Put.putByteString $ pack "AMQP"
+                         mapM_ Put.putWord8 [0, 0, 9, 1]
+
       start_ok = (Frame 0 (MethodPayload (Connection_start_ok (FieldTable (Map.fromList []))
                                           (ShortString "AMQPLAIN")
         --login has to be a table without first 4 bytes
