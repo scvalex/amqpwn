@@ -36,13 +36,14 @@ import Network.AMQP.Types ( Connection(..), Frame(..), FramePayload(..)
                           , ShortString(..), MethodPayload(..), ShortString
                           , Channel(..), FieldTable(..), LongString(..) )
 import Network.BSD ( getProtocolNumber )
-import Network.Socket ( socket, PortNumber, Family(..), inet_addr
+import Network.Socket ( Socket, socket, PortNumber, Family(..), inet_addr
                       , SocketType(..), connect, SockAddr(..), sClose )
 import qualified Network.Socket.ByteString as NB
 import Text.Printf ( printf )
 
 
-data ConnectingState = COpening | CStarting1 | CStarting2 | CTuning
+data ConnectingState = CInitiating | CStarting1 | CStarting2 | CTuning
+                     | COpening | COpen
 
 -- | Process: reads incoming frames from socket and forwards them to
 -- opened channels.
@@ -93,7 +94,7 @@ openConnection host port vhost username password = do
   addr <- inet_addr host
   connect sock (SockAddrInet port addr)
 
-  conn <- doConnectionOpen COpening sock (0 :: Int)
+  conn <- doConnectionOpen CInitiating sock 0
 
   -- spawn the connectionReceiver
   forkIO $ CE.finally (connectionReceiver conn) $ do
@@ -117,9 +118,12 @@ openConnection host port vhost username password = do
 
   return conn
     where
-      doConnectionOpen COpening sock frameMax = do
+      doConnectionOpen :: ConnectingState -> Socket -> Int -> IO Connection
+      doConnectionOpen CInitiating sock frameMax = do
         -- C: protocol-header
-        NB.send sock protocolHeader
+        NB.send sock . toStrict . Put.runPut $ do
+          Put.putByteString $ pack "AMQP"
+          mapM_ Put.putWord8 [0, 0, 9, 1]
         doConnectionOpen CStarting1 sock frameMax
       doConnectionOpen CStarting1 sock frameMax = do
           -- S: connection.start
@@ -131,6 +135,7 @@ openConnection host port vhost username password = do
                                  | "AMQPLAIN" `elem` (words $ show ms) ->
                     doConnectionOpen CStarting2 sock frameMax
                 _ ->
+                    -- FIXME proper errors
                     fail $ printf "unknown connection type: %s"
                                   (show methodPayload)
           Frame _ _ ->
@@ -151,21 +156,43 @@ openConnection host port vhost username password = do
         doConnectionOpen CTuning sock frameMax
       doConnectionOpen CTuning sock frameMax = do
         -- S: tune
-        Frame 0 (MethodPayload (Connection_tune _ frame_max _)) <-
-            readFrameSock sock 4096
-        -- C: tune_ok
-        let maxFrameSize = min 131072 frame_max
-
-        writeFrameSock sock . Frame 0 . MethodPayload
-                           $ Connection_tune_ok 0 maxFrameSize 0
+        frame <- readFrameSock sock 4096
+        case frame of
+          (Frame 0 methodPayload) ->
+              case methodPayload of
+                -- FIXME add heartbeat support
+                (MethodPayload (Connection_tune _ sFrameMax _)) -> do
+                    let frameMax' =
+                            if frameMax == 0
+                              then (fromIntegral sFrameMax)
+                              else min frameMax (fromIntegral sFrameMax)
+                    -- C: tune_ok
+                    writeFrameSock sock . Frame 0 . MethodPayload
+                         $ Connection_tune_ok 0 (fromIntegral frameMax') 0
+                    doConnectionOpen COpening sock frameMax'
+                _ ->
+                    fail $ printf "unhandled tune %s" (show methodPayload)
+          Frame _ _ ->
+              fail "unexpected frame on non-0 channel"
+      doConnectionOpen COpening sock frameMax = do
         -- C: open
-        writeFrameSock sock open
+        writeFrameSock sock . Frame 0 . MethodPayload  $ Connection_open
+                           (ShortString vhost) -- virtual host
+                           (ShortString "")    -- capabilities
+                           True                -- insist
         -- S: open_ok
-        Frame 0 (MethodPayload (Connection_open_ok _)) <-
-            readFrameSock sock $ fromIntegral maxFrameSize
-
+        frame <- readFrameSock sock frameMax
+        case frame of
+          Frame 0 methodPayload ->
+              case methodPayload of
+                (MethodPayload (Connection_open_ok _)) ->
+                    doConnectionOpen COpen sock frameMax
+                _ ->
+                    fail $ printf "unhandled open_ok %s" (show methodPayload)
+          Frame _ _ ->
+              fail "unexpected frame on non-0 channel"
+      doConnectionOpen COpen sock frameMax = do
         -- Connection established!
-
         myConnChannels <- newMVar IM.empty
         cClosed <- newMVar Nothing
         ccl <- newEmptyMVar
@@ -174,22 +201,13 @@ openConnection host port vhost username password = do
         lastChanId <- newMVar 0
         return $ Connection { getSocket = sock
                             , getChannels = myConnChannels
-                            , getMaxFrameSize = fromIntegral maxFrameSize
+                            , getMaxFrameSize = frameMax
                             , getConnClosed = cClosed
                             , getConnClosedLock = ccl
                             , getConnWriteLock = writeLock
                             , getConnCloseHandlers = myConnClosedHandlers
                             , getLastChannelId = lastChanId
                             }
-
-      protocolHeader = toStrict $ Put.runPut $ do
-                         Put.putByteString $ pack "AMQP"
-                         mapM_ Put.putWord8 [0, 0, 9, 1]
-
-      open = Frame 0  $ MethodPayload (Connection_open
-                                       (ShortString vhost) -- virtual host
-                                       (ShortString "")    -- capabilities
-                                       True)               -- insist
 
 -- | Close a connection.
 closeConnection :: Connection -> IO ()
