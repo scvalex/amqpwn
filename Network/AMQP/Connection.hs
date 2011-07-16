@@ -81,8 +81,6 @@ connectionReceiver conn = do
 -- method will throw a 'ConnectionClosedException'.  The exception
 -- will not contain a reason why the connection was closed, so you'll
 -- have to find out yourself.
---
--- FIXME: use a state machine for login
 openConnection :: String          -- ^ hostname
                -> PortNumber     -- ^ port
                -> String         -- ^ virtual host
