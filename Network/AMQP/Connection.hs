@@ -160,7 +160,6 @@ openConnection host port vhost username password = do
         case frame of
           (Frame 0 methodPayload) ->
               case methodPayload of
-                -- FIXME add heartbeat support
                 (MethodPayload (Connection_tune _ sFrameMax _)) -> do
                     let frameMax' =
                             if frameMax == 0
