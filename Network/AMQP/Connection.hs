@@ -45,35 +45,6 @@ import Text.Printf ( printf )
 data ConnectingState = CInitiating | CStarting1 | CStarting2 | CTuning
                      | COpening | COpen
 
--- | Process: reads incoming frames from socket and forwards them to
--- opened channels.
-connectionReceiver :: Connection -> IO ()
-connectionReceiver conn = do
-    (Frame chanID payload) <- readFrameSock (getSocket conn)
-                                            (getMaxFrameSize conn)
-    forwardToChannel chanID payload
-    connectionReceiver conn
-        where
-          -- Forward to channel0
-          forwardToChannel 0 (MethodPayload Connection_close_ok) = do
-                            modifyMVar_ (getConnClosed conn) $ \_ ->
-                                return $ Just "closed by user"
-                            killThread =<< myThreadId
-          forwardToChannel 0 (MethodPayload (Connection_close _ s _ _ )) = do
-                            let (ShortString errorMsg) = s
-                            modifyMVar_ (getConnClosed conn) $ \_ ->
-                                return $ Just errorMsg
-                            killThread =<< myThreadId
-          forwardToChannel 0 payload =
-              printf "WARNING: unexpected msg on channel zero: %s"
-                     (show payload)
-
-          -- Forward asynchronous message to other channels
-          forwardToChannel chanID payload =
-              withMVar (getChannels conn) $ \cs ->
-                  case IM.lookup (fromIntegral chanID) cs of
-                    Just c -> writeChan (inQueue $ fst c) payload
-                    Nothing -> printf "ERROR: channel %d not open" chanID
 
 -- | Open a connection to an AMQP server.
 --
@@ -247,3 +218,32 @@ addConnectionClosedHandler conn ifClosed handler = do
         -- otherwise add it to the list
         _ -> modifyMVar_ (getConnCloseHandlers conn) $ \handlers ->
               return (handler:handlers)
+
+-- | Process: reads incoming frames from socket and forwards them to
+-- opened channels.
+connectionReceiver :: Connection -> IO ()
+connectionReceiver conn = do
+    (Frame chanID payload) <- readFrameSock (getSocket conn)
+                                            (getMaxFrameSize conn)
+    forwardToChannel chanID payload
+    connectionReceiver conn
+        where
+          -- Forward to channel0
+          forwardToChannel 0 (MethodPayload Connection_close_ok) = do
+                            modifyMVar_ (getConnClosed conn) $ \_ ->
+                                return $ Just "closed by user"
+                            killThread =<< myThreadId
+          forwardToChannel 0 (MethodPayload (Connection_close _ s _ _ )) = do
+                            let (ShortString errorMsg) = s
+                            modifyMVar_ (getConnClosed conn) $ \_ ->
+                                return $ Just errorMsg
+                            killThread =<< myThreadId
+          forwardToChannel 0 msg =
+              fail $ printf "unexpected msg on channel zero: %s" (show msg)
+
+          -- Forward asynchronous message to other channels
+          forwardToChannel chanID payload =
+              withMVar (getChannels conn) $ \cs ->
+                  case IM.lookup (fromIntegral chanID) cs of
+                    Just c  -> writeChan (inQueue $ fst c) payload
+                    Nothing -> fail $ printf "channel %d not open" chanID
