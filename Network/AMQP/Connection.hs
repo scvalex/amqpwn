@@ -212,29 +212,26 @@ openConnection host port vhost username password = do
 
 -- | Close a connection.
 closeConnection :: Connection -> IO ()
-closeConnection c = do
-  CE.catch (
-     withMVar (getConnWriteLock c) $ \_ ->
-         writeFrameSock (getSocket c) $
-                            (Frame 0 (MethodPayload (Connection_close
-                                                     --TODO: set these values
-                                                     0 -- reply_code
-                                                     (ShortString "") -- reply_text
-                                                     0 -- class_id
-                                                     0 -- method_id
-                                                    )))
-           )
-        (\ (_ :: CE.IOException) -> return ()) -- do nothing if
-                                              -- connection is already
-                                              -- closed
-
+closeConnection conn = do
+  -- do nothing if connection is already closed
+  CE.catch doClose $ \ (_ :: CE.IOException) ->
+      return ()
   -- wait for connection_close_ok by the server; this MVar gets filled
   -- in the CE.finally handler in openConnection
-  readMVar $ getConnClosedLock c
+  readMVar $ getConnClosedLock conn
   return ()
+    where
+      doClose = withMVar (getConnWriteLock conn) $ \_ ->
+                       writeFrameSock (getSocket conn) $ Frame 0 $
+                       MethodPayload $ Connection_close
+                                         --TODO: set these values
+                                         0 -- reply_code
+                                         (ShortString "") -- reply_text
+                                         0 -- class_id
+                                         0 -- method_id
 
 -- | Add a handler that will be called after the connection is closed
--- -- either by calling 'closeConnection' or by an exception.  If the
+-- either by calling 'closeConnection' or by an exception.  If the
 -- if-closed parameter is True and the connection is already closed,
 -- the handler will be called immediately.  If if-closed is False and
 -- the connection is already closed, the handler will never be called.
@@ -248,5 +245,5 @@ addConnectionClosedHandler conn ifClosed handler = do
         -- connection is already closed, so call the handler directly
         Just _ | ifClosed == True -> handler
         -- otherwise add it to the list
-        _ -> modifyMVar_ (getConnCloseHandlers conn) $ \old ->
-              return $ handler:old
+        _ -> modifyMVar_ (getConnCloseHandlers conn) $ \handlers ->
+              return (handler:handlers)
