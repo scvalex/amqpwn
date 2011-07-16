@@ -135,7 +135,6 @@ openConnection host port vhost username password = do
                                  | "AMQPLAIN" `elem` (words $ show ms) ->
                     doConnectionOpen CStarting2 sock frameMax
                 _ ->
-                    -- FIXME proper errors
                     fail $ printf "unknown connection type: %s"
                                   (show methodPayload)
           Frame _ _ ->
