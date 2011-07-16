@@ -95,24 +95,7 @@ openConnection host port vhost username password = do
   conn <- doConnectionOpen CInitiating sock 0
 
   -- spawn the connectionReceiver
-  forkIO $ CE.finally (connectionReceiver conn) $ do
-    -- try closing socket
-    CE.catch (sClose sock) (\(_ :: CE.SomeException) -> return ())
-
-    -- mark as closed
-    modifyMVar_ (getConnClosed conn) $ \x -> return . Just $ maybe "closed" id x
-
-    -- kill all channel-threads
-    withMVar (getChannels conn) $ \cc -> mapM_ (\c -> killThread $ snd c) $
-                                     IM.elems cc
-    withMVar (getChannels conn) $ \_ -> return $ IM.empty
-
-    -- mark connection as closed, so all pending calls to
-    -- 'closeConnection' can now return
-    tryPutMVar (getConnClosedLock conn) ()
-
-    -- notify connection-close-handlers
-    withMVar (getConnCloseHandlers conn) sequence
+  forkIO $ CE.finally (connectionReceiver conn) (finalizeConnection conn)
 
   return conn
     where
@@ -205,6 +188,27 @@ openConnection host port vhost username password = do
                             , getConnCloseHandlers = myConnClosedHandlers
                             , getLastChannelId = lastChanId
                             }
+      finalizeConnection conn = do
+        -- try closing socket
+        CE.catch (sClose $ getSocket conn) $ \(_ :: CE.SomeException) ->
+            return ()
+
+        -- mark as closed
+        modifyMVar_ (getConnClosed conn) $ \x ->
+            return . Just $ maybe "closed" id x
+
+        -- kill all channel-threads
+        withMVar (getChannels conn) $ \cc ->
+            mapM_ (\c -> killThread $ snd c) (IM.elems cc)
+        withMVar (getChannels conn) $ \_ ->
+            return IM.empty
+
+        -- mark connection as closed, so all pending calls to
+        -- 'closeConnection' can now return
+        tryPutMVar (getConnClosedLock conn) ()
+
+        -- notify connection-close-handlers
+        withMVar (getConnCloseHandlers conn) sequence
 
 -- | Close a connection.
 closeConnection :: Connection -> IO ()
