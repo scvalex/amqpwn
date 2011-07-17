@@ -19,17 +19,14 @@ main = do
 tests = test [ "alwaysPass" ~: TestCase $ do
                  return ()
              , "connectionOpenClose" ~: TestCase $ do
-                 conn <- openConnection "localhost" (fromIntegral 5672) "/"
-                                        "guest" "guest"
+                 conn <- openConnection "localhost" 5672 "/" "guest" "guest"
                  closeConnection conn
              , "connectionNoServer" ~: TestCase $ do
                  handle (\(_ :: IOException) -> return ()) $ do
-                     openConnection "localhost" (fromIntegral 5600) "/"
-                                    "guest" "guest"
+                     openConnection "localhost" 5600 "/" "guest" "guest"
                      assertFailure "connected to non-existing broker"
              , "connectionWrongLogin" ~: TestCase $ do
                  handle (\(ConnectionClosedException _) -> return ()) $ do
-                     openConnection "localhost" (fromIntegral 5672) "/"
-                                    "guest" "geust"
+                     openConnection "localhost" 5672 "/" "guest" "geust"
                      assertFailure "connected with wrong password"
              ]
