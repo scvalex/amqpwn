@@ -5,12 +5,16 @@
 -- thread in your application that talks to the AMQP server (but you
 -- don't have to as channels are thread-safe)
 module Network.AMQP.Channel (
+        -- * Opaque channel type
         Channel,
-        openChannel, closeChannel', request,
+
+        -- Opening and closing channels
+        openChannel, closeChannel',
+
+        -- * Something else
+        request,
         readAssembly, writeAssembly
     ) where
-
-import Prelude hiding ( lookup, length, take, drop )
 
 import Control.Concurrent ( forkIO, killThread, myThreadId )
 import Control.Concurrent.Chan ( Chan, newChan, isEmptyChan
@@ -19,8 +23,8 @@ import Control.Concurrent.MVar ( MVar, newMVar, newEmptyMVar, takeMVar
                                , modifyMVar, modifyMVar_
                                , putMVar, withMVar, tryPutMVar )
 import qualified Control.Exception as CE
-import Data.IntMap ( insert, delete )
-import Data.Map ( empty, lookup )
+import qualified Data.IntMap as IM
+import qualified Data.Map as M
 import Data.Maybe ( isNothing )
 import Network.AMQP.Assembly ( readAssembly, writeAssembly, writeAssembly' )
 import Network.AMQP.Helpers ( newLock, openLock, closeLock, killLock )
@@ -42,7 +46,7 @@ openChannel c = do
     ca <- newLock
 
     myChanClosed <- newMVar Nothing
-    myConsumers <- newMVar empty
+    myConsumers <- newMVar M.empty
 
     --get a new unused channelID
     newChannelId <- modifyMVar (getLastChannelId c) $ \x -> return (x+1,x+1)
@@ -56,7 +60,7 @@ openChannel c = do
 
     --add new channel to connection's channel map
     modifyMVar_ (getChannels c)
-                (\oldMap -> return $ insert newChannelId (newChannel, thrID) oldMap)
+                (\oldMap -> return $ IM.insert newChannelId (newChannel, thrID) oldMap)
 
     (SimpleMethod (Channel_open_ok _)) <- request newChannel (SimpleMethod (Channel_open (ShortString "")))
     return newChannel
@@ -94,7 +98,7 @@ channelReceiver chan = do
                                                 (ShortString routingKey))
                                 properties myMsgBody) =
           withMVar (consumers chan) (\s -> do
-            case lookup consumerTag s of
+            case M.lookup consumerTag s of
               Just subscriber -> do
                 let msg = msgFromContentHeaderProperties properties myMsgBody
                     env = Envelope { envDeliveryTag = deliveryTag
@@ -134,7 +138,7 @@ channelReceiver chan = do
 -- closes the channel internally; but doesn't tell the server
 closeChannel' :: Channel -> IO ()
 closeChannel' c = do
-  modifyMVar_ (getChannels $ connection c) $ \old -> return $ delete (fromIntegral $ channelID c) old
+  modifyMVar_ (getChannels $ connection c) $ \old -> return $ IM.delete (fromIntegral $ channelID c) old
   -- mark channel as closed
   modifyMVar_ (chanClosed c) $ \x -> do
     killLock $ chanActive c
