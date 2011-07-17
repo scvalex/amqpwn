@@ -16,12 +16,12 @@ module Network.AMQP.Channel (
         readAssembly, writeAssembly
     ) where
 
+import Control.Applicative ( (<$>) )
 import Control.Concurrent ( forkIO, killThread, myThreadId )
-import Control.Concurrent.Chan ( Chan, newChan, isEmptyChan
-                               , writeChan, readChan )
-import Control.Concurrent.MVar ( MVar, newMVar, newEmptyMVar, takeMVar
-                               , modifyMVar, modifyMVar_
-                               , putMVar, withMVar, tryPutMVar )
+import Control.Concurrent.STM ( STM, atomically, TChan, newTChan, isEmptyTChan
+                              , writeTChan, readTChan, TMVar, newTMVar
+                              , newEmptyTMVar, takeTMVar, putTMVar, readTMVar
+                              , tryPutTMVar )
 import qualified Control.Exception as CE
 import qualified Data.IntMap as IM
 import qualified Data.Map as M
@@ -34,39 +34,45 @@ import Network.AMQP.Protocol ( throwMostRelevantAMQPException
 import Network.AMQP.Types ( Channel (..), Connection(..), Assembly(..)
                           , MethodPayload(..), ShortString(..), Envelope(..)
                           , AMQPException(..) )
+import Text.Printf ( printf )
 
 -- | Open a new channel on the connection.
 --
 -- FIXME: Implement channel.close.
 openChannel :: Connection -> IO Channel
 openChannel conn = do
-    newInQueue <- newChan
-    rpcQueue <- newChan
-    myLastConsumerTag <- newMVar 0
-    ca <- newLock
+    newChannel <- atomically $ do
+        newInQueue <- newTChan
+        rpcQueue <- newTChan
+        myLastConsumerTag <- newTMVar 0
+        ca <- newLock
 
-    myChanClosed <- newMVar Nothing
-    myConsumers <- newMVar M.empty
+        myChanClosed <- newTMVar Nothing
+        myConsumers <- newTMVar M.empty
 
-    -- get a new unused channelID
-    newChannelId <- modifyMVar (getLastChannelId conn) $ \x ->
-                       return (x+1, x+1)
+        -- get a new unused channelID
+        newChannelId <- (+1) <$> takeTMVar (getLastChannelId conn)
+        putTMVar (getLastChannelId conn) newChannelId
 
-    let newChannel = Channel { getConnection           = conn
-                             , getInQueue              = newInQueue
-                             , getRPCQueue             = rpcQueue
-                             , getChannelId       = fromIntegral newChannelId
-                             , getLastConsumerTag      = myLastConsumerTag
-                             , getChanActive           = ca
-                             , getChanClosed           = myChanClosed
-                             , getConsumers            = myConsumers }
+        return $ Channel { getConnection           = conn
+                         , getInQueue              = newInQueue
+                         , getRPCQueue             = rpcQueue
+                         , getChannelId       = fromIntegral newChannelId
+                         , getLastConsumerTag      = myLastConsumerTag
+                         , getChanActive           = ca
+                         , getChanClosed           = myChanClosed
+                         , getConsumers            = myConsumers }
 
     tid <- forkIO $ CE.finally (channelReceiver newChannel)
                                (closeChannel' newChannel)
 
     -- add new channel to connection's channel map
-    modifyMVar_ (getChannels conn) $ \oldMap ->
-        return $ IM.insert newChannelId (newChannel, tid) oldMap
+    atomically $ do
+      channels <- takeTMVar (getChannels conn)
+      putTMVar (getChannels conn) $
+               IM.insert (fromIntegral $ getChannelId newChannel)
+                         (newChannel, tid)
+                         channels
 
     (SimpleMethod (Channel_open_ok _)) <-
         request newChannel . SimpleMethod $ Channel_open (fromString "")
@@ -79,18 +85,16 @@ channelReceiver chan = do
   p <- readAssembly $ getInQueue chan
 
   if isResponse p
-    then do
-      emp <- isEmptyChan $ getRPCQueue chan
+    then atomically $ do
+      emp <- isEmptyTChan $ getRPCQueue chan
       if emp
-        then CE.throwIO $ userError "got response, but have no corresponding request"
-        else do
-          x <- readChan (getRPCQueue chan)
-          putMVar x p
+        then CE.throw . ConnectionClosedException $
+             printf "got unrequested response: %s" (show p)
+        else flip putTMVar p =<< readTChan (getRPCQueue chan)
     --handle asynchronous assemblies
     else handleAsync p
 
   channelReceiver chan
-
       where
         isResponse :: Assembly -> Bool
         isResponse (ContentMethod (Basic_deliver _ _ _ _ _) _ _) = False
@@ -105,32 +109,30 @@ channelReceiver chan = do
         --Basic.Deliver: forward msg to registered consumer
         handleAsync (ContentMethod (Basic_deliver (ShortString consumerTag) deliveryTag redelivered (ShortString myExchangeName)
                                                 (ShortString routingKey))
-                                properties myMsgBody) =
-          withMVar (getConsumers chan) (\s -> do
-            case M.lookup consumerTag s of
-              Just subscriber -> do
-                let msg = msgFromContentHeaderProperties properties myMsgBody
-                    env = Envelope { envDeliveryTag = deliveryTag
-                                   , envRedelivered = redelivered
-                                   , envExchangeName = myExchangeName
-                                   , envRoutingKey = routingKey
-                                   , envChannel = chan
-                                   }
-
-                subscriber (msg, env)
-              Nothing -> do
-                  -- got a message, but have no registered subscriber;
-                  -- so drop it
-                return ()
-          )
+                                properties myMsgBody) = do
+          consumers <- atomically $ readTMVar (getConsumers chan)
+          case M.lookup consumerTag consumers of
+            Just subscriber -> do
+              let msg = msgFromContentHeaderProperties properties myMsgBody
+                  env = Envelope { envDeliveryTag = deliveryTag
+                                 , envRedelivered = redelivered
+                                 , envExchangeName = myExchangeName
+                                 , envRoutingKey = routingKey
+                                 , envChannel = chan
+                                 }
+              subscriber (msg, env)
+            Nothing -> do
+              -- got a message, but have no registered subscriber;
+              -- so drop it
+              return ()
 
         handleAsync (SimpleMethod (Channel_close _ (ShortString errorMsg) _ _)) = do
 
-          modifyMVar_ (getChanClosed chan) $ \_ -> return $ Just errorMsg
+          atomically $ putTMVar (getChanClosed chan) (Just errorMsg)
           closeChannel' chan
           killThread =<< myThreadId
 
-        handleAsync (SimpleMethod (Channel_flow active)) = do
+        handleAsync (SimpleMethod (Channel_flow active)) = atomically $ do
           if active
             then openLock $ getChanActive chan
             else closeLock $ getChanActive chan
@@ -146,39 +148,41 @@ channelReceiver chan = do
 
 -- closes the channel internally; but doesn't tell the server
 closeChannel' :: Channel -> IO ()
-closeChannel' c = do
-  modifyMVar_ (getChannels $ getConnection c) $ \old -> return $ IM.delete (fromIntegral $ getChannelId c) old
+closeChannel' chan = atomically $ do
+  channels <- takeTMVar (getChannels $ getConnection chan)
+  putTMVar (getChannels $ getConnection chan) $
+       IM.delete (fromIntegral $ getChannelId chan) channels
   -- mark channel as closed
-  modifyMVar_ (getChanClosed c) $ \x -> do
-    killLock $ getChanActive c
-    killRPCQueue $ getRPCQueue c
-    return $ Just $ maybe "closed" id x
-      where
-        killRPCQueue :: Chan (MVar a) -> IO ()
-        killRPCQueue chan = do
-          emp <- isEmptyChan chan
-          if emp
-            then return ()
-            else do
-              x <- readChan chan
-              tryPutMVar x $ error "channel closed"
-              killRPCQueue chan
+  chanClosed <- takeTMVar (getChanClosed chan)
+  killLock $ getChanActive chan
+  killRPCQueue $ getRPCQueue chan
+  putTMVar (getChanClosed chan) (Just $ maybe "closed" id chanClosed)
+    where
+      killRPCQueue :: TChan (TMVar a) -> STM ()
+      killRPCQueue queue = do
+        emp <- isEmptyTChan queue
+        if emp
+          then return ()
+          else do
+            x <- readTChan queue
+            tryPutTMVar x $ error "channel closed"
+            killRPCQueue queue
 
 -- | sends an assembly and receives the response
 request :: Channel -> Assembly -> IO Assembly
 request chan m = do
-    res <- newEmptyMVar
+    res <- atomically $ newEmptyTMVar
     CE.catches
           (do
-            withMVar (getChanClosed chan) $ \cc -> do
-              if isNothing cc
-                then do
-                  writeChan (getRPCQueue chan) res
-                  writeAssembly' chan m
-                else CE.throwIO $ userError "closed"
+            chanClosed <- atomically $ readTMVar (getChanClosed chan)
+            if isNothing chanClosed
+              then do
+                atomically $ writeTChan (getRPCQueue chan) res
+                writeAssembly' chan m
+              else CE.throw $ userError "closed"
 
-           -- res might contain an exception, so evaluate it here
-            !r <- takeMVar res
+            -- res might contain an exception, so evaluate it here
+            !r <- atomically $ takeTMVar res
             return r)
           [ CE.Handler (\ (_ :: AMQPException) -> throwMostRelevantAMQPException chan)
           , CE.Handler (\ (_ :: CE.ErrorCall) -> throwMostRelevantAMQPException chan)

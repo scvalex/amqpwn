@@ -19,7 +19,8 @@ module Network.AMQP.Types (
     ) where
 
 import Control.Applicative ( Applicative(..), (<$>) )
-import Control.Concurrent ( MVar, ThreadId, Chan )
+import Control.Concurrent ( ThreadId )
+import Control.Concurrent.STM ( TMVar, TChan )
 import Control.Exception ( Exception )
 import Data.Binary ( Binary(..) )
 import Data.Binary.Get ( Get, getWord8, getLazyByteString )
@@ -42,36 +43,41 @@ import Network.AMQP.Internal.Types
 data Connection = Connection
     { getSocket :: Socket
       -- ^ connection socket
-    , getChannels :: (MVar (IntMap (Channel, ThreadId)))
+    , getChannels :: (TMVar (IntMap (Channel, ThreadId)))
       -- ^ open channels (channelID => (Channel, ChannelThread))
     , getMaxFrameSize :: Int
       -- ^ negotiated maximum frame size
-    , getConnClosed :: MVar (Maybe String)
+    , getConnClosed :: TMVar (Maybe String)
       -- ^ reason for closure, if closed
-    , getConnClosedLock :: MVar ()
+    , getConnClosedLock :: TMVar ()
       -- ^ used by closeConnection to block until connection-close
       -- handshake is complete
-    , getConnWriteLock :: MVar ()
+    , getConnWriteLock :: TMVar ()
       -- ^ to ensure atomic writes to the socket
-    , getConnCloseHandlers :: MVar [IO ()]
+    , getConnCloseHandlers :: TMVar [IO ()]
       -- ^ handlers to be notified of connection closures
-    , getLastChannelId :: MVar Int
+    , getLastChannelId :: TMVar Int
       -- ^ for auto-incrementing the channelIDs
     }
 
 -- | Represents an AMQP channel.
 data Channel = Channel
-    { getConnection :: Connection      -- ^ the underlying connection
-    , getInQueue :: Chan FramePayload  -- ^ incoming frames (from Connection)
-    , getRPCQueue :: Chan (MVar Assembly)
-      -- ^ for every request, an MVar is stored here waiting for the response
-    , getChannelId :: Word16           -- ^ channel number
-    , getLastConsumerTag :: MVar Int   -- ^ used to assign new consumer tags
+    { getConnection :: Connection
+      -- ^ the underlying connection
+    , getInQueue :: TChan FramePayload
+      -- ^ incoming frames (from Connection)
+    , getRPCQueue :: TChan (TMVar Assembly)
+      -- ^ for every request, an TMVar is stored here waiting for the response
+    , getChannelId :: Word16
+      -- ^ channel number
+    , getLastConsumerTag :: TMVar Int
+      -- ^ used to assign new consumer tags
     , getChanActive :: Lock
       -- ^ used for flow-control. if lock is closed, no content
       -- methods will be sent
-    , getChanClosed :: MVar (Maybe String) -- ^ reason for closing the channel
-    , getConsumers :: MVar (M.Map String ((Message, Envelope) -> IO ()))
+    , getChanClosed :: TMVar (Maybe String)
+      -- ^ reason for closing the channel
+    , getConsumers :: TMVar (M.Map String ((Message, Envelope) -> IO ()))
       -- ^ consumerTag => callback
     }
 

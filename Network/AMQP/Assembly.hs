@@ -4,7 +4,7 @@ module Network.AMQP.Assembly (
         readAssembly, writeAssembly, writeAssembly'
     ) where
 
-import Control.Concurrent.Chan ( Chan, readChan )
+import Control.Concurrent.STM ( atomically, TChan, readTChan )
 import qualified Control.Exception as CE
 import qualified Data.ByteString.Lazy.Char8 as LB
 import Network.AMQP.Protocol ( methodHasContent, collectContent, writeFrames
@@ -15,9 +15,9 @@ import Network.AMQP.Types ( Channel(..), FramePayload(..), Assembly(..)
 
 ------------- ASSEMBLY -------------------------
 -- | reads all frames necessary to build an assembly
-readAssembly :: Chan FramePayload -> IO Assembly
+readAssembly :: TChan FramePayload -> IO Assembly
 readAssembly chan = do
-  m <- readChan chan
+  m <- atomically $ readTChan chan
   case m of
     MethodPayload p -> --got a method frame
       if methodHasContent m
@@ -33,7 +33,7 @@ writeAssembly' :: Channel -> Assembly -> IO ()
 writeAssembly' chan (ContentMethod m properties msg) = do
   -- wait iff the AMQP server instructed us to withhold sending
   -- content data (flow control)
-  waitLock $ getChanActive chan
+  atomically $ waitLock $ getChanActive chan
   let !toWrite = [ MethodPayload m
                  , ContentHeaderPayload (getClassIDOf properties) --classID
                                         0 --weight is deprecated in AMQP 0-9

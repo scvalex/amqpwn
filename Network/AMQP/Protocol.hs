@@ -6,8 +6,7 @@ module Network.AMQP.Protocol (
         throwMostRelevantAMQPException
     ) where
 
-import Control.Concurrent ( Chan, readChan )
-import Control.Concurrent.MVar ( withMVar, readMVar )
+import Control.Concurrent.STM ( atomically, TChan, readTChan, readTMVar )
 import qualified Control.Exception as CE
 import Data.Binary
 import Data.Binary.Get
@@ -78,29 +77,30 @@ writeFrameSock sock x = do
 writeFrames :: Channel -> [FramePayload] -> IO ()
 writeFrames chan payloads =
     let conn = getConnection chan
-    in withMVar (getChannels conn) $ \chans ->
-        if IntMap.member (fromIntegral $ getChannelId chan) chans
-          then CE.catch
-               -- ensure at most one thread is writing to the socket
-               -- at any time
-                   (withMVar (getConnWriteLock conn) $ \_ ->
-                        mapM_ (\payload -> writeFrameSock (getSocket conn) (Frame (getChannelId chan) payload)) payloads)
-                   ( \(_ :: CE.IOException) -> do
-                       CE.throwIO $ userError "connection not open")
-          else do
-            CE.throwIO $ userError "channel not open"
+    in do
+      chans <- atomically $ readTMVar (getChannels conn)
+      if IntMap.member (fromIntegral $ getChannelId chan) chans
+        then CE.catch
+             -- ensure at most one thread is writing to the socket
+             -- at any time
+                 (atomically (readTMVar $ getConnWriteLock conn) >>= \_ ->
+                      mapM_ (\payload -> writeFrameSock (getSocket conn) (Frame (getChannelId chan) payload)) payloads)
+                 ( \(_ :: CE.IOException) -> do
+                     CE.throwIO $ userError "connection not open")
+        else do
+          CE.throwIO $ userError "channel not open"
 
 -- | reads a contentheader and contentbodies and assembles them
-collectContent :: Chan FramePayload -> IO (ContentHeaderProperties, BL.ByteString)
+collectContent :: TChan FramePayload -> IO (ContentHeaderProperties, BL.ByteString)
 collectContent chan = do
-  (ContentHeaderPayload _ _ bodySize props) <- readChan chan
+  (ContentHeaderPayload _ _ bodySize props) <- atomically $ readTChan chan
 
   content <- collect $ fromIntegral bodySize
   return (props, BL.concat content)
       where
         collect x | x <= 0 = return []
         collect remData = do
-          (ContentBodyPayload payload) <- readChan chan
+          (ContentBodyPayload payload) <- atomically $ readTChan chan
           r <- collect (remData - (BL.length payload))
           return $ payload : r
 
@@ -119,12 +119,12 @@ msgFromContentHeaderProperties (CHBasic content_type _ _ delivery_mode _ correla
 -- this throws an AMQPException based on the status of the connection and the channel
 -- if both connection and channel are closed, it will throw a ConnectionClosedException
 throwMostRelevantAMQPException :: Channel -> IO b
-throwMostRelevantAMQPException chan = do
-  cc <- readMVar $ getConnClosed $ getConnection chan
+throwMostRelevantAMQPException chan = atomically $ do
+  cc <- readTMVar $ getConnClosed $ getConnection chan
   case cc of
-    Just r -> CE.throwIO $ ConnectionClosedException r
+    Just r -> CE.throw $ ConnectionClosedException r
     Nothing -> do
-            chc <- readMVar $ getChanClosed chan
+            chc <- readTMVar $ getChanClosed chan
             case chc of
-              Just r -> CE.throwIO $ ChannelClosedException r
-              Nothing -> CE.throwIO $ ConnectionClosedException "unknown reason"
+              Just r -> CE.throw $ ChannelClosedException r
+              Nothing -> CE.throw $ ConnectionClosedException "unknown reason"

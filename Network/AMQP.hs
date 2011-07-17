@@ -98,8 +98,7 @@ module Network.AMQP (
 import Data.Binary
 import qualified Data.Map as M
 
-import Control.Concurrent
-import Control.Monad
+import Control.Concurrent.STM
 
 import Network.AMQP.Channel
 import Network.AMQP.Connection
@@ -258,10 +257,17 @@ ackToBool NoAck = True
 consumeMsgs :: Channel -> String -> Ack -> ((Message,Envelope) -> IO ()) -> IO ConsumerTag
 consumeMsgs chan myQueueName ack callback = do
     --generate a new consumer tag
-    newConsumerTag <- (liftM show) $ modifyMVar (getLastConsumerTag chan) $ \c -> return (c+1,c+1)
+    newConsumerTag <- atomically $ do
+           lastConsumerTag <- takeTMVar (getLastConsumerTag chan)
+           let newConsumerTag = lastConsumerTag + 1
+           putTMVar (getLastConsumerTag chan) newConsumerTag
+           return (show newConsumerTag)
 
     --register the consumer
-    modifyMVar_ (getConsumers chan) $ \c -> return $ M.insert newConsumerTag callback c
+    atomically $ do
+      consumers <- takeTMVar (getConsumers chan)
+      putTMVar (getConsumers chan)
+               (M.insert newConsumerTag callback consumers)
 
     writeAssembly chan (SimpleMethod $ undefined{-Basic_consume
         1 -- ticket
@@ -283,8 +289,9 @@ cancelConsumer chan consumerTag = do
         ))
 
     --unregister the consumer
-    modifyMVar_ (getConsumers chan) $ \c -> return $ M.delete consumerTag c
-
+    atomically $ do
+      consumers <- takeTMVar (getConsumers chan)
+      putTMVar (getConsumers chan) (M.delete consumerTag consumers)
 
 -- | @publishMsg chan exchangeName routingKey msg@ publishes @msg@ to the exchange with the provided @exchangeName@. The effect of @routingKey@ depends on the type of the exchange
 --

@@ -7,7 +7,9 @@ module Network.AMQP.Helpers (
     ) where
 
 import Control.Applicative ( Applicative(..), (<$>) )
-import Control.Concurrent.MVar
+import Control.Concurrent.STM ( STM, TMVar, newTMVar, tryPutTMVar, putTMVar
+                              , tryTakeTMVar, readTMVar )
+import Control.Monad ( unless )
 import qualified Data.ByteString.Char8 as BS
 import qualified Data.ByteString.Lazy.Char8 as BL
 
@@ -22,33 +24,31 @@ toLazy x = BL.fromChunks [x]
 -- | If the lock is open, calls to waitLock will immediately return.
 -- If it is closed, calls to waitLock will block.  If the lock is
 -- killed, it will always be open and can't be closed anymore.
-data Lock = Lock (MVar Bool) (MVar ())
+data Lock = Lock (TMVar Bool) (TMVar ())
 
 -- | Create an (alive, open) lock.
-newLock :: IO Lock
-newLock = Lock <$> (newMVar False) <*> (newMVar ())
+newLock :: STM Lock
+newLock = Lock <$> (newTMVar False) <*> (newTMVar ())
 
 -- | Open the given lock.  You may open a lock as many times as you
 -- please.
-openLock :: Lock -> IO ()
-openLock (Lock _ b) = tryPutMVar b () >> return ()
+openLock :: Lock -> STM ()
+openLock (Lock _ b) = tryPutTMVar b () >> return ()
 
 -- | Close the given lock.  You may always close a lock, but closing a
 -- killed lock is a no-op.
-closeLock :: Lock -> IO ()
+closeLock :: Lock -> STM ()
 closeLock (Lock a b) = do
-  withMVar a $ \killed ->
-      if killed
-        then return ()
-        else tryTakeMVar b >> return ()
+  killed <- readTMVar a
+  unless killed $ tryTakeTMVar b >> return ()
   return ()
 
 -- | Wait until the given lock is open.
-waitLock :: Lock -> IO ()
-waitLock (Lock _ b) = readMVar b
+waitLock :: Lock -> STM ()
+waitLock (Lock _ b) = readTMVar b
 
 -- | Kill the given lock and open it.
-killLock :: Lock -> IO Bool
+killLock :: Lock -> STM Bool
 killLock (Lock a b) = do
-  modifyMVar_ a $ \_ -> return True
-  tryPutMVar b ()
+  putTMVar a True
+  tryPutTMVar b ()
