@@ -1,7 +1,7 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 
 import Control.Exception ( handle, IOException )
-import Network.AMQP ( openConnection, closeConnection )
+import Network.AMQP ( openConnection, closeConnectionNormal )
 import Network.AMQP.Types ( AMQPException(..) )
 import System.Exit ( exitFailure )
 import Test.HUnit
@@ -20,7 +20,7 @@ tests = test [ "alwaysPass" ~: TestCase $ do
                  return ()
              , "connectionOpenClose" ~: TestCase $ do
                  conn <- openConnection "localhost" 5672 "/" "guest" "guest"
-                 closeConnection conn
+                 closeConnectionNormal conn
              , "connectionNoServer" ~: TestCase $ do
                  handle (\(_ :: IOException) -> return ()) $ do
                      openConnection "localhost" 5600 "/" "guest" "guest"
