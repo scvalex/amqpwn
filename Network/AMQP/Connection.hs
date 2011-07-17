@@ -18,6 +18,7 @@ module Network.AMQP.Connection (
         closeConnection, addConnectionClosedHandler
     ) where
 
+import Control.Applicative ( (<$>) )
 import Control.Concurrent ( killThread, myThreadId, forkIO )
 import Control.Concurrent.Chan ( writeChan )
 import Control.Concurrent.MVar ( modifyMVar_, withMVar, newMVar
@@ -36,8 +37,8 @@ import Network.AMQP.Types ( Connection(..), Frame(..), FramePayload(..)
                           , ShortString(..), MethodPayload(..), ShortString
                           , Channel(..), FieldTable(..), LongString(..)
                           , AMQPException(..) )
-import Network.BSD ( getProtocolNumber )
-import Network.Socket ( Socket, socket, PortNumber, Family(..), inet_addr
+import Network.BSD ( getProtocolNumber, getHostByName, hostAddress )
+import Network.Socket ( Socket, socket, PortNumber, Family(..)
                       , SocketType(..), connect, SockAddr(..), sClose )
 import qualified Network.Socket.ByteString as NB
 import Text.Printf ( printf )
@@ -63,7 +64,7 @@ openConnection :: String          -- ^ hostname
                -> IO Connection
 openConnection host port vhost username password = do
   sock <- socket AF_INET Stream =<< getProtocolNumber "tcp"
-  addr <- inet_addr host
+  addr <- hostAddress <$> getHostByName host
   connect sock (SockAddrInet port addr)
 
   conn <- doConnectionOpen CInitiating sock 0
