@@ -14,8 +14,8 @@ module Network.AMQP.Connection (
         Connection,
 
         -- * Opening and closing connections
-        openConnection,
-        closeConnection, addConnectionClosedHandler
+        openConnection, addConnectionClosedHandler,
+        closeConnection, closeConnectionNormal
     ) where
 
 import Control.Applicative ( (<$>) )
@@ -30,7 +30,7 @@ import Data.ByteString.Char8 ( pack )
 import Data.ByteString.Lazy.Char8 ( unpack )
 import qualified Data.IntMap as IM
 import qualified Data.Map as Map
-import Data.String ( fromString )
+import Data.String ( IsString(..) )
 import Network.AMQP.Protocol ( readFrameSock, writeFrameSock )
 import Network.AMQP.Helpers ( toStrict )
 import Network.AMQP.Types ( Connection(..), Frame(..), FramePayload(..)
@@ -192,9 +192,17 @@ openConnection host port vhost username password = do
         -- notify connection-close-handlers
         withMVar (getConnCloseHandlers conn) sequence
 
+-- | Close a connection normally.
+closeConnectionNormal :: Connection -> IO ()
+closeConnectionNormal = closeConnection (200 :: Int) "Goodbye"
+
 -- | Close a connection.
-closeConnection :: Connection -> IO ()
-closeConnection conn = do
+closeConnection :: (Integral n1)
+                => n1            -- ^ reply code
+                -> String        -- ^ reply text
+                -> Connection    -- ^ connection to close
+                -> IO ()
+closeConnection replyCode replyText conn = do
   -- do nothing if connection is already closed
   CE.catch doClose $ \ (_ :: CE.IOException) ->
       return ()
@@ -206,9 +214,8 @@ closeConnection conn = do
       doClose = withMVar (getConnWriteLock conn) $ \_ ->
                        writeFrameSock (getSocket conn) $ Frame 0 $
                        MethodPayload $ Connection_close
-                                         --TODO: set these values
-                                         0 -- reply_code
-                                         (ShortString "") -- reply_text
+                                         (fromIntegral replyCode)
+                                         (fromString replyText)
                                          0 -- class_id
                                          0 -- method_id
 
