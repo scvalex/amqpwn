@@ -18,6 +18,7 @@ module Network.AMQP.Connection (
         closeConnection, addConnectionClosedHandler
     ) where
 
+import Control.Applicative ( (<$>) )
 import Control.Concurrent ( killThread, myThreadId, forkIO )
 import Control.Concurrent.Chan ( writeChan )
 import Control.Concurrent.MVar ( modifyMVar_, withMVar, newMVar
@@ -36,9 +37,9 @@ import Network.AMQP.Types ( Connection(..), Frame(..), FramePayload(..)
                           , ShortString(..), MethodPayload(..), ShortString
                           , Channel(..), FieldTable(..), LongString(..)
                           , AMQPException(..) )
-import Network.BSD ( getProtocolNumber )
-import Network.Socket ( Socket, socket, PortNumber, Family(..), inet_addr
-                      , SocketType(..), connect, SockAddr(..), sClose )
+import Network.BSD ( getProtocolNumber, getHostByName, hostAddress )
+import Network.Socket ( Socket, socket, Family(..), SocketType(..), connect
+                      , SockAddr(..), sClose )
 import qualified Network.Socket.ByteString as NB
 import Text.Printf ( printf )
 
@@ -55,16 +56,17 @@ data ConnectingState = CInitiating | CStarting1 | CStarting2 | CTuning
 -- have to find out yourself.
 --
 -- May throw 'ConnectionStartException' if the server handshake fails.
-openConnection :: String          -- ^ hostname
-               -> PortNumber     -- ^ port
+openConnection :: (Integral n)
+               => String         -- ^ hostname
+               -> n              -- ^ port
                -> String         -- ^ virtual host
                -> String         -- ^ username
                -> String         -- ^ password
                -> IO Connection
 openConnection host port vhost username password = do
   sock <- socket AF_INET Stream =<< getProtocolNumber "tcp"
-  addr <- inet_addr host
-  connect sock (SockAddrInet port addr)
+  addr <- hostAddress <$> getHostByName host
+  connect sock (SockAddrInet (fromIntegral port) addr)
 
   conn <- doConnectionOpen CInitiating sock 0
 
