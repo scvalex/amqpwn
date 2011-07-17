@@ -41,7 +41,7 @@ import Network.AMQP.Types ( Channel (..), Connection(..), Assembly(..)
 openChannel :: Connection -> IO Channel
 openChannel conn = do
     newInQueue <- newChan
-    outRes <- newChan
+    rpcQueue <- newChan
     myLastConsumerTag <- newMVar 0
     ca <- newLock
 
@@ -54,7 +54,7 @@ openChannel conn = do
 
     let newChannel = Channel { getConnection           = conn
                              , getInQueue              = newInQueue
-                             , getOutstandingResponses = outRes
+                             , getRPCQueue             = rpcQueue
                              , getChannelId       = fromIntegral newChannelId
                              , getLastConsumerTag      = myLastConsumerTag
                              , getChanActive           = ca
@@ -80,11 +80,11 @@ channelReceiver chan = do
 
   if isResponse p
     then do
-      emp <- isEmptyChan $ getOutstandingResponses chan
+      emp <- isEmptyChan $ getRPCQueue chan
       if emp
         then CE.throwIO $ userError "got response, but have no corresponding request"
         else do
-          x <- readChan (getOutstandingResponses chan)
+          x <- readChan (getRPCQueue chan)
           putMVar x p
     --handle asynchronous assemblies
     else handleAsync p
@@ -151,18 +151,18 @@ closeChannel' c = do
   -- mark channel as closed
   modifyMVar_ (getChanClosed c) $ \x -> do
     killLock $ getChanActive c
-    killOutstandingResponses $ getOutstandingResponses c
+    killRPCQueue $ getRPCQueue c
     return $ Just $ maybe "closed" id x
       where
-        killOutstandingResponses :: Chan (MVar a) -> IO ()
-        killOutstandingResponses chan = do
+        killRPCQueue :: Chan (MVar a) -> IO ()
+        killRPCQueue chan = do
           emp <- isEmptyChan chan
           if emp
             then return ()
             else do
               x <- readChan chan
               tryPutMVar x $ error "channel closed"
-              killOutstandingResponses chan
+              killRPCQueue chan
 
 -- | sends an assembly and receives the response
 request :: Channel -> Assembly -> IO Assembly
@@ -173,7 +173,7 @@ request chan m = do
             withMVar (getChanClosed chan) $ \cc -> do
               if isNothing cc
                 then do
-                  writeChan (getOutstandingResponses chan) res
+                  writeChan (getRPCQueue chan) res
                   writeAssembly' chan m
                 else CE.throwIO $ userError "closed"
 

@@ -63,7 +63,7 @@ data Connection = Connection
 data Channel = Channel
     { getConnection :: Connection      -- ^ the underlying connection
     , getInQueue :: Chan FramePayload  -- ^ incoming frames (from Connection)
-    , getOutstandingResponses :: Chan (MVar Assembly)
+    , getRPCQueue :: Chan (MVar Assembly)
       -- ^ for every request, an MVar is stored here waiting for the response
     , getChannelId :: Word16           -- ^ channel number
     , getLastConsumerTag :: MVar Int   -- ^ used to assign new consumer tags
