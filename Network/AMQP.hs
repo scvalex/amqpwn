@@ -258,10 +258,10 @@ ackToBool NoAck = True
 consumeMsgs :: Channel -> String -> Ack -> ((Message,Envelope) -> IO ()) -> IO ConsumerTag
 consumeMsgs chan myQueueName ack callback = do
     --generate a new consumer tag
-    newConsumerTag <- (liftM show) $ modifyMVar (lastConsumerTag chan) $ \c -> return (c+1,c+1)
+    newConsumerTag <- (liftM show) $ modifyMVar (getLastConsumerTag chan) $ \c -> return (c+1,c+1)
 
     --register the consumer
-    modifyMVar_ (consumers chan) $ \c -> return $ M.insert newConsumerTag callback c
+    modifyMVar_ (getConsumers chan) $ \c -> return $ M.insert newConsumerTag callback c
 
     writeAssembly chan (SimpleMethod $ undefined{-Basic_consume
         1 -- ticket
@@ -283,7 +283,7 @@ cancelConsumer chan consumerTag = do
         ))
 
     --unregister the consumer
-    modifyMVar_ (consumers chan) $ \c -> return $ M.delete consumerTag c
+    modifyMVar_ (getConsumers chan) $ \c -> return $ M.delete consumerTag c
 
 
 -- | @publishMsg chan exchangeName routingKey msg@ publishes @msg@ to the exchange with the provided @exchangeName@. The effect of @routingKey@ depends on the type of the exchange

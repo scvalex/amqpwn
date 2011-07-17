@@ -60,15 +60,19 @@ data Connection = Connection
     }
 
 -- | Represents an AMQP channel.
-data Channel = Channel {
-      connection :: Connection,
-      inQueue :: Chan FramePayload, --incoming frames (from Connection)
-      outstandingResponses :: Chan (MVar Assembly), -- for every request an MVar is stored here waiting for the response
-      channelID :: Word16,
-      lastConsumerTag :: MVar Int,
-      chanActive :: Lock, -- used for flow-control. if lock is closed, no content methods will be sent
-      chanClosed :: MVar (Maybe String),
-      consumers :: MVar (M.Map String ((Message, Envelope) -> IO ())) -- who is consumer of a queue? (consumerTag => callback)
+data Channel = Channel
+    { getConnection :: Connection      -- ^ the underlying connection
+    , getInQueue :: Chan FramePayload  -- ^ incoming frames (from Connection)
+    , getOutstandingResponses :: Chan (MVar Assembly)
+      -- ^ for every request, an MVar is stored here waiting for the response
+    , getChannelId :: Word16           -- ^ channel number
+    , getLastConsumerTag :: MVar Int   -- ^ used to assign new consumer tags
+    , getChanActive :: Lock
+      -- ^ used for flow-control. if lock is closed, no content
+      -- methods will be sent
+    , getChanClosed :: MVar (Maybe String) -- ^ reason for closing the channel
+    , getConsumers :: MVar (M.Map String ((Message, Envelope) -> IO ()))
+      -- ^ consumerTag => callback
     }
 
 -- | An assembly is a higher-level object consisting of several frames

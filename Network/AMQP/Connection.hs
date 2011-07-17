@@ -264,6 +264,6 @@ connectionReceiver conn = do
           forwardToChannel chanID payload =
               withMVar (getChannels conn) $ \cs ->
                   case IM.lookup (fromIntegral chanID) cs of
-                    Just c  -> writeChan (inQueue $ fst c) payload
+                    Just c  -> writeChan (getInQueue $ fst c) payload
                     Nothing -> CE.throw . ConnectionClosedException $
                                  printf "channel %d not open" chanID

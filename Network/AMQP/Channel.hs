@@ -26,6 +26,7 @@ import qualified Control.Exception as CE
 import qualified Data.IntMap as IM
 import qualified Data.Map as M
 import Data.Maybe ( isNothing )
+import Data.String ( fromString )
 import Network.AMQP.Assembly ( readAssembly, writeAssembly, writeAssembly' )
 import Network.AMQP.Helpers ( newLock, openLock, closeLock, killLock )
 import Network.AMQP.Protocol ( throwMostRelevantAMQPException
@@ -34,12 +35,11 @@ import Network.AMQP.Types ( Channel (..), Connection(..), Assembly(..)
                           , MethodPayload(..), ShortString(..), Envelope(..)
                           , AMQPException(..) )
 
--- | opens a new channel on the connection
+-- | Open a new channel on the connection.
 --
--- There's currently no closeChannel method, but you can always just
--- close the connection (the maximum number of channels is 65535).
+-- FIXME: Implement channel.close.
 openChannel :: Connection -> IO Channel
-openChannel c = do
+openChannel conn = do
     newInQueue <- newChan
     outRes <- newChan
     myLastConsumerTag <- newMVar 0
@@ -48,37 +48,43 @@ openChannel c = do
     myChanClosed <- newMVar Nothing
     myConsumers <- newMVar M.empty
 
-    --get a new unused channelID
-    newChannelId <- modifyMVar (getLastChannelId c) $ \x -> return (x+1,x+1)
+    -- get a new unused channelID
+    newChannelId <- modifyMVar (getLastChannelId conn) $ \x ->
+                       return (x+1, x+1)
 
-    let newChannel = Channel c newInQueue outRes (fromIntegral newChannelId)
-                             myLastConsumerTag ca myChanClosed myConsumers
+    let newChannel = Channel { getConnection = conn
+                             , getInQueue =  newInQueue
+                             , getOutstandingResponses = outRes
+                             , getChannelId = fromIntegral newChannelId
+                             , getLastConsumerTag = myLastConsumerTag
+                             , getChanActive = ca
+                             , getChanClosed = myChanClosed
+                             , getConsumers = myConsumers }
 
+    tid <- forkIO $ CE.finally (channelReceiver newChannel)
+                               (closeChannel' newChannel)
 
-    thrID <- forkIO $ CE.finally (channelReceiver newChannel)
-                                 (closeChannel' newChannel)
+    -- add new channel to connection's channel map
+    modifyMVar_ (getChannels conn) $ \oldMap ->
+        return $ IM.insert newChannelId (newChannel, tid) oldMap
 
-    --add new channel to connection's channel map
-    modifyMVar_ (getChannels c)
-                (\oldMap -> return $ IM.insert newChannelId (newChannel, thrID) oldMap)
-
-    (SimpleMethod (Channel_open_ok _)) <- request newChannel (SimpleMethod (Channel_open (ShortString "")))
+    (SimpleMethod (Channel_open_ok _)) <-
+        request newChannel . SimpleMethod $ Channel_open (fromString "")
     return newChannel
-
 
 -- | The thread that is run for every channel
 channelReceiver :: Channel -> IO ()
 channelReceiver chan = do
   --read incoming frames; they are put there by a Connection thread
-  p <- readAssembly $ inQueue chan
+  p <- readAssembly $ getInQueue chan
 
   if isResponse p
     then do
-      emp <- isEmptyChan $ outstandingResponses chan
+      emp <- isEmptyChan $ getOutstandingResponses chan
       if emp
         then CE.throwIO $ userError "got response, but have no corresponding request"
         else do
-          x <- readChan (outstandingResponses chan)
+          x <- readChan (getOutstandingResponses chan)
           putMVar x p
     --handle asynchronous assemblies
     else handleAsync p
@@ -97,7 +103,7 @@ channelReceiver chan = do
         handleAsync (ContentMethod (Basic_deliver (ShortString consumerTag) deliveryTag redelivered (ShortString myExchangeName)
                                                 (ShortString routingKey))
                                 properties myMsgBody) =
-          withMVar (consumers chan) (\s -> do
+          withMVar (getConsumers chan) (\s -> do
             case M.lookup consumerTag s of
               Just subscriber -> do
                 let msg = msgFromContentHeaderProperties properties myMsgBody
@@ -117,14 +123,14 @@ channelReceiver chan = do
 
         handleAsync (SimpleMethod (Channel_close _ (ShortString errorMsg) _ _)) = do
 
-          modifyMVar_ (chanClosed chan) $ \_ -> return $ Just errorMsg
+          modifyMVar_ (getChanClosed chan) $ \_ -> return $ Just errorMsg
           closeChannel' chan
           killThread =<< myThreadId
 
         handleAsync (SimpleMethod (Channel_flow active)) = do
           if active
-            then openLock $ chanActive chan
-            else closeLock $ chanActive chan
+            then openLock $ getChanActive chan
+            else closeLock $ getChanActive chan
         -- in theory we should respond with flow_ok but rabbitMQ 1.7 ignores that, so it doesn't matter
           return ()
 
@@ -138,11 +144,11 @@ channelReceiver chan = do
 -- closes the channel internally; but doesn't tell the server
 closeChannel' :: Channel -> IO ()
 closeChannel' c = do
-  modifyMVar_ (getChannels $ connection c) $ \old -> return $ IM.delete (fromIntegral $ channelID c) old
+  modifyMVar_ (getChannels $ getConnection c) $ \old -> return $ IM.delete (fromIntegral $ getChannelId c) old
   -- mark channel as closed
-  modifyMVar_ (chanClosed c) $ \x -> do
-    killLock $ chanActive c
-    killOutstandingResponses $ outstandingResponses c
+  modifyMVar_ (getChanClosed c) $ \x -> do
+    killLock $ getChanActive c
+    killOutstandingResponses $ getOutstandingResponses c
     return $ Just $ maybe "closed" id x
       where
         killOutstandingResponses :: Chan (MVar a) -> IO ()
@@ -161,10 +167,10 @@ request chan m = do
     res <- newEmptyMVar
     CE.catches
           (do
-            withMVar (chanClosed chan) $ \cc -> do
+            withMVar (getChanClosed chan) $ \cc -> do
               if isNothing cc
                 then do
-                  writeChan (outstandingResponses chan) res
+                  writeChan (getOutstandingResponses chan) res
                   writeAssembly' chan m
                 else CE.throwIO $ userError "closed"
 

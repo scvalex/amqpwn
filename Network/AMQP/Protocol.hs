@@ -77,14 +77,14 @@ writeFrameSock sock x = do
 -- | writes multiple frames to the channel atomically
 writeFrames :: Channel -> [FramePayload] -> IO ()
 writeFrames chan payloads =
-    let conn = connection chan
+    let conn = getConnection chan
     in withMVar (getChannels conn) $ \chans ->
-        if IntMap.member (fromIntegral $ channelID chan) chans
+        if IntMap.member (fromIntegral $ getChannelId chan) chans
           then CE.catch
                -- ensure at most one thread is writing to the socket
                -- at any time
                    (withMVar (getConnWriteLock conn) $ \_ ->
-                        mapM_ (\payload -> writeFrameSock (getSocket conn) (Frame (channelID chan) payload)) payloads)
+                        mapM_ (\payload -> writeFrameSock (getSocket conn) (Frame (getChannelId chan) payload)) payloads)
                    ( \(_ :: CE.IOException) -> do
                        CE.throwIO $ userError "connection not open")
           else do
@@ -120,11 +120,11 @@ msgFromContentHeaderProperties (CHBasic content_type _ _ delivery_mode _ correla
 -- if both connection and channel are closed, it will throw a ConnectionClosedException
 throwMostRelevantAMQPException :: Channel -> IO b
 throwMostRelevantAMQPException chan = do
-  cc <- readMVar $ getConnClosed $ connection chan
+  cc <- readMVar $ getConnClosed $ getConnection chan
   case cc of
     Just r -> CE.throwIO $ ConnectionClosedException r
     Nothing -> do
-            chc <- readMVar $ chanClosed chan
+            chc <- readMVar $ getChanClosed chan
             case chc of
               Just r -> CE.throwIO $ ChannelClosedException r
               Nothing -> CE.throwIO $ ConnectionClosedException "unknown reason"

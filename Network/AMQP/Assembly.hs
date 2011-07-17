@@ -33,7 +33,7 @@ writeAssembly' :: Channel -> Assembly -> IO ()
 writeAssembly' chan (ContentMethod m properties msg) = do
   -- wait iff the AMQP server instructed us to withhold sending
   -- content data (flow control)
-  waitLock $ chanActive chan
+  waitLock $ getChanActive chan
   let !toWrite = [ MethodPayload m
                  , ContentHeaderPayload (getClassIDOf properties) --classID
                                         0 --weight is deprecated in AMQP 0-9
@@ -44,7 +44,7 @@ writeAssembly' chan (ContentMethod m properties msg) = do
                     then do
                       --split into frames of maxFrameSize
                       map ContentBodyPayload
-                         (splitLen msg (fromIntegral $ getMaxFrameSize $ connection chan))
+                         (splitLen msg (fromIntegral $ getMaxFrameSize $ getConnection chan))
                     else [])
   writeFrames chan toWrite
       where
