@@ -18,4 +18,8 @@ tests = test [ "alwaysPass" ~: TestCase $ do
                  conn <- openConnection "127.0.0.1" (fromIntegral 5672) "/"
                                         "guest" "guest"
                  closeConnection conn
+             , "connectionNoServer" ~: TestCase $ do
+                 openConnection "0.0.0.0" (fromIntegral 5672) "/"
+                                "guest" "guest"
+                 assertFailure "connected to non-existing broker"
              ]

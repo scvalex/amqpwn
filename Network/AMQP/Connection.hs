@@ -34,7 +34,8 @@ import Network.AMQP.Protocol ( readFrameSock, writeFrameSock )
 import Network.AMQP.Helpers ( toStrict )
 import Network.AMQP.Types ( Connection(..), Frame(..), FramePayload(..)
                           , ShortString(..), MethodPayload(..), ShortString
-                          , Channel(..), FieldTable(..), LongString(..) )
+                          , Channel(..), FieldTable(..), LongString(..)
+                          , AMQPException(..) )
 import Network.BSD ( getProtocolNumber )
 import Network.Socket ( Socket, socket, PortNumber, Family(..), inet_addr
                       , SocketType(..), connect, SockAddr(..), sClose )
@@ -52,6 +53,8 @@ data ConnectingState = CInitiating | CStarting1 | CStarting2 | CTuning
 -- method will throw a 'ConnectionClosedException'.  The exception
 -- will not contain a reason why the connection was closed, so you'll
 -- have to find out yourself.
+--
+-- May throw 'ConnectionStartException' if the server handshake fails.
 openConnection :: String          -- ^ hostname
                -> PortNumber     -- ^ port
                -> String         -- ^ virtual host
@@ -88,10 +91,12 @@ openConnection host port vhost username password = do
                     doConnectionOpen CStarting2 sock frameMax
                 _ ->
                     -- FIXME proper errors
-                    fail $ printf "unknown connection type: %s"
-                                  (show methodPayload)
+                    CE.throw . ConnectionStartException $
+                                 printf "unknown connection type: %s"
+                                        (show methodPayload)
           Frame _ _ ->
-              fail "unexpected frame on non-0 channel"
+              CE.throw $ ConnectionStartException
+                    "unexpected frame on non-0 channel"
       doConnectionOpen CStarting2 sock frameMax = do
         -- C: start_ok
         let loginTable = LongString . drop 4 . unpack . Put.runPut . put $
@@ -122,9 +127,11 @@ openConnection host port vhost username password = do
                          $ Connection_tune_ok 0 (fromIntegral frameMax') 0
                     doConnectionOpen COpening sock frameMax'
                 _ ->
-                    fail $ printf "unhandled tune %s" (show methodPayload)
+                    CE.throw . ConnectionStartException $
+                      printf "unhandled tune %s" (show methodPayload)
           Frame _ _ ->
-              fail "unexpected frame on non-0 channel"
+              CE.throw $ ConnectionStartException
+                    "unexpected frame on non-0 channel"
       doConnectionOpen COpening sock frameMax = do
         -- C: open
         writeFrameSock sock . Frame 0 . MethodPayload  $ Connection_open
@@ -139,9 +146,11 @@ openConnection host port vhost username password = do
                 (MethodPayload (Connection_open_ok _)) ->
                     doConnectionOpen COpen sock frameMax
                 _ ->
-                    fail $ printf "unhandled open_ok %s" (show methodPayload)
+                    CE.throw . ConnectionStartException $
+                      printf "unhandled open_ok %s" (show methodPayload)
           Frame _ _ ->
-              fail "unexpected frame on non-0 channel"
+              CE.throw $ ConnectionStartException
+                    "unexpected frame on non-0 channel"
       doConnectionOpen COpen sock frameMax = do
         -- Connection established!
         myConnChannels <- newMVar IM.empty
@@ -239,11 +248,13 @@ connectionReceiver conn = do
                                 return $ Just errorMsg
                             killThread =<< myThreadId
           forwardToChannel 0 msg =
-              fail $ printf "unexpected msg on channel zero: %s" (show msg)
+              CE.throw . ConnectionClosedException $
+                printf "unexpected msg on channel zero: %s" (show msg)
 
           -- Forward asynchronous message to other channels
           forwardToChannel chanID payload =
               withMVar (getChannels conn) $ \cs ->
                   case IM.lookup (fromIntegral chanID) cs of
                     Just c  -> writeChan (inQueue $ fst c) payload
-                    Nothing -> fail $ printf "channel %d not open" chanID
+                    Nothing -> CE.throw . ConnectionClosedException $
+                                 printf "channel %d not open" chanID

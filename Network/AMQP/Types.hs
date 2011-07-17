@@ -157,9 +157,10 @@ instance Enum FramePayload where
 
 -- Exceptions
 
--- | The Exception thrown when soft and hard AQMP error occur.
+-- | The Exception thrown when soft and hard AQMP errors occur.
 data AMQPException = ChannelClosedException String
                    | ConnectionClosedException String
+                   | ConnectionStartException String
                      deriving (Typeable, Show, Ord, Eq)
 
 instance Exception AMQPException
