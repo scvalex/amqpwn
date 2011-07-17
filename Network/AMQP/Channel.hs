@@ -52,14 +52,14 @@ openChannel conn = do
     newChannelId <- modifyMVar (getLastChannelId conn) $ \x ->
                        return (x+1, x+1)
 
-    let newChannel = Channel { getConnection = conn
-                             , getInQueue =  newInQueue
+    let newChannel = Channel { getConnection           = conn
+                             , getInQueue              = newInQueue
                              , getOutstandingResponses = outRes
-                             , getChannelId = fromIntegral newChannelId
-                             , getLastConsumerTag = myLastConsumerTag
-                             , getChanActive = ca
-                             , getChanClosed = myChanClosed
-                             , getConsumers = myConsumers }
+                             , getChannelId       = fromIntegral newChannelId
+                             , getLastConsumerTag      = myLastConsumerTag
+                             , getChanActive           = ca
+                             , getChanClosed           = myChanClosed
+                             , getConsumers            = myConsumers }
 
     tid <- forkIO $ CE.finally (channelReceiver newChannel)
                                (closeChannel' newChannel)
@@ -72,10 +72,10 @@ openChannel conn = do
         request newChannel . SimpleMethod $ Channel_open (fromString "")
     return newChannel
 
--- | The thread that is run for every channel
+-- | Process: Maintains the incoming method queue for the channel.
 channelReceiver :: Channel -> IO ()
 channelReceiver chan = do
-  --read incoming frames; they are put there by a Connection thread
+  -- read incoming frames; they are put there by a Connection thread
   p <- readAssembly $ getInQueue chan
 
   if isResponse p
@@ -94,10 +94,13 @@ channelReceiver chan = do
       where
         isResponse :: Assembly -> Bool
         isResponse (ContentMethod (Basic_deliver _ _ _ _ _) _ _) = False
-        isResponse (ContentMethod (Basic_return _ _ _ _) _ _) = False
-        isResponse (SimpleMethod (Channel_flow _)) = False
-        isResponse (SimpleMethod (Channel_close _ _ _ _)) = False
-        isResponse _ = True
+        isResponse (ContentMethod (Basic_return _ _ _ _) _ _)    = False
+        isResponse (SimpleMethod (Channel_flow _))               = False
+        isResponse (SimpleMethod (Channel_close _ _ _ _))        = False
+        isResponse (SimpleMethod (Basic_ack _ _))                = False
+        isResponse (SimpleMethod (Basic_nack _ _ _))             = False
+        isResponse (SimpleMethod (Basic_cancel _ _))             = False
+        isResponse _                                             = True
 
         --Basic.Deliver: forward msg to registered consumer
         handleAsync (ContentMethod (Basic_deliver (ShortString consumerTag) deliveryTag redelivered (ShortString myExchangeName)

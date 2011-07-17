@@ -261,9 +261,9 @@ connectionReceiver conn = do
                 printf "unexpected msg on channel zero: %s" (show msg)
 
           -- Forward asynchronous message to other channels
-          forwardToChannel chanID payload =
+          forwardToChannel chanId payload =
               withMVar (getChannels conn) $ \cs ->
-                  case IM.lookup (fromIntegral chanID) cs of
-                    Just c  -> writeChan (getInQueue $ fst c) payload
+                  case IM.lookup (fromIntegral chanId) cs of
+                    Just ch -> writeChan (getInQueue $ fst ch) payload
                     Nothing -> CE.throw . ConnectionClosedException $
-                                 printf "channel %d not open" chanID
+                                 printf "channel %d not open" chanId
