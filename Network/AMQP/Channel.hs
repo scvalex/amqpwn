@@ -129,12 +129,11 @@ channelReceiver chan = do
           closeChannel' chan
           killThread =<< myThreadId
 
-        --Basic.return
         handleAsync (ContentMethod (Basic_return _ _ _ _) _ _) = do
             -- TODO: implement handling; this won't be called
             -- currently, because publishMsg sets "mandatory" and
             -- "immediate" to false
-          print "BASIC.RETURN not implemented"
+          CE.throw $ ConnectionClosedException "basic.return not implemented"
 
 -- | Close the channel internally, but doen't tell the server.  Note
 -- that this hangs if getChanClosed is not already set.
