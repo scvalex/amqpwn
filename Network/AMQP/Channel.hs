@@ -13,7 +13,7 @@ module Network.AMQP.Channel (
 
         -- * Something else
         request,
-        readAssembly, writeAssembly
+        readMethod, writeMethod
     ) where
 
 import Control.Applicative ( (<$>) )
@@ -23,16 +23,18 @@ import Control.Concurrent.STM ( STM, atomically, TChan, newTChan, isEmptyTChan
                               , newEmptyTMVar, takeTMVar, putTMVar, readTMVar
                               , tryPutTMVar )
 import qualified Control.Exception as CE
+import qualified Data.ByteString.Lazy.Char8 as LB
 import qualified Data.IntMap as IM
 import qualified Data.Map as M
 import Data.Maybe ( isNothing )
 import Data.String ( fromString )
-import Network.AMQP.Assembly ( readAssembly, writeAssembly, writeAssembly' )
-import Network.AMQP.Protocol ( throwMostRelevantAMQPException
+import Network.AMQP.Protocol ( methodHasContent, collectContent, writeFrames
+                             , throwMostRelevantAMQPException
                              , msgFromContentHeaderProperties )
-import Network.AMQP.Types ( Channel (..), Connection(..), Assembly(..)
+import Network.AMQP.Types ( Channel (..), Connection(..), Method(..)
                           , MethodPayload(..), ShortString(..), Envelope(..)
-                          , AMQPException(..) )
+                          , AMQPException(..), FramePayload(..)
+                          , getClassIDOf )
 import Text.Printf ( printf )
 
 -- | Open a new channel on the connection.
@@ -79,7 +81,7 @@ openChannel conn = do
 channelReceiver :: Channel -> IO ()
 channelReceiver chan = do
   -- read incoming frames; they are put there by a Connection thread
-  p <- readAssembly $ getInQueue chan
+  p <- readMethod $ getInQueue chan
 
   if isResponse p
     then atomically $ do
@@ -93,7 +95,7 @@ channelReceiver chan = do
 
   channelReceiver chan
       where
-        isResponse :: Assembly -> Bool
+        isResponse :: Method -> Bool
         isResponse (ContentMethod (Basic_deliver _ _ _ _ _) _ _) = False
         isResponse (ContentMethod (Basic_return _ _ _ _) _ _)    = False
         isResponse (SimpleMethod (Channel_flow _))               = False
@@ -158,7 +160,7 @@ closeChannel' chan = atomically $ do
             killRPCQueue queue
 
 -- | Send a method and wait for response.
-request :: Channel -> Assembly -> IO Assembly
+request :: Channel -> Method -> IO Method
 request chan m = do
     res <- atomically $ newEmptyTMVar
     CE.catches
@@ -167,7 +169,7 @@ request chan m = do
             if isNothing chanClosed
               then do
                 atomically $ writeTChan (getRPCQueue chan) res
-                writeAssembly' chan m
+                unsafeWriteMethod chan m
               else CE.throw $ ChannelClosedException "closed"
 
             -- res might contain an exception, so evaluate it here
@@ -179,3 +181,51 @@ request chan m = do
                             throwMostRelevantAMQPException chan)
           , CE.Handler (\ (_ :: CE.IOException) ->
                             throwMostRelevantAMQPException chan)]
+
+-- | Read an entire method (multiple frames) and return it.
+readMethod :: TChan FramePayload -> IO Method
+readMethod chan = do
+  m <- atomically $ readTChan chan
+  case m of
+    MethodPayload p ->           -- got a method frame
+         if methodHasContent m
+           then do
+             (props, msg) <- collectContent chan
+             return $ ContentMethod p props msg
+           else do
+             return $ SimpleMethod p
+    unframe -> CE.throw . ConnectionClosedException $
+                  printf "unexpected frame: %s" (show unframe)
+
+-- | Write a method to the channel.  Normalizes exceptions.
+writeMethod :: Channel -> Method -> IO ()
+writeMethod chan m =
+    CE.catches
+          (unsafeWriteMethod chan m)
+          [ CE.Handler (\ (_ :: AMQPException) -> throwMostRelevantAMQPException chan)
+          , CE.Handler (\ (_ :: CE.ErrorCall) -> throwMostRelevantAMQPException chan)
+          , CE.Handler (\ (_ :: CE.IOException) -> throwMostRelevantAMQPException chan)
+          ]
+
+-- | Write a method to the channel.  Does /not/ handle exceptions.
+unsafeWriteMethod :: Channel -> Method -> IO ()
+unsafeWriteMethod chan (ContentMethod m properties msg) = do
+  let !toWrite = [ MethodPayload m
+                 , ContentHeaderPayload (getClassIDOf properties) --classID
+                                        0 --weight is deprecated in AMQP 0-9
+                                        (fromIntegral $ LB.length msg) --bodySize
+                                        properties
+                 ] ++
+                 (if LB.length msg > 0
+                    then do
+                      --split into frames of maxFrameSize
+                      map ContentBodyPayload
+                         (splitLen msg (fromIntegral $ getMaxFrameSize $ getConnection chan))
+                    else [])
+  writeFrames chan toWrite
+      where
+        splitLen str len | LB.length str > len = (LB.take len str):(splitLen (LB.drop len str) len)
+        splitLen str _ = [str]
+
+unsafeWriteMethod chan (SimpleMethod m) = do
+    writeFrames chan [MethodPayload m]

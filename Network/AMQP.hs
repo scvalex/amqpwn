@@ -269,7 +269,7 @@ consumeMsgs chan myQueueName ack callback = do
       putTMVar (getConsumers chan)
                (M.insert newConsumerTag callback consumers)
 
-    writeAssembly chan (SimpleMethod $ undefined{-Basic_consume
+    writeMethod chan (SimpleMethod $ undefined{-Basic_consume
         1 -- ticket
         (ShortString myQueueName) -- queue
         (ShortString newConsumerTag) -- consumer_tag
@@ -298,7 +298,7 @@ cancelConsumer chan consumerTag = do
 -- NOTE: This method may temporarily block if the AMQP server requested us to stop sending content data (using the flow control mechanism). So don't rely on this method returning immediately
 publishMsg :: Channel -> String -> String -> Message -> IO ()
 publishMsg chan myExchangeName routingKey msg = do
-    writeAssembly chan (ContentMethod (Basic_publish
+    writeMethod chan (ContentMethod (Basic_publish
             1 -- ticket; ignored by rabbitMQ
             (ShortString myExchangeName)
             (ShortString routingKey)
@@ -352,7 +352,7 @@ If @multiple==True@, and @deliveryTag==0@, tells the server to acknowledge all o
 -}
 ackMsg :: Channel -> LongLongInt -> Bool -> IO ()
 ackMsg chan deliveryTag multiple = 
-    writeAssembly chan $ (SimpleMethod (Basic_ack
+    writeMethod chan $ (SimpleMethod (Basic_ack
         deliveryTag -- delivery_tag
         multiple -- multiple
         ))
@@ -366,7 +366,7 @@ ackEnv env = ackMsg (envChannel env) (envDeliveryTag env) False
 -- NOTE: RabbitMQ 1.7 doesn't implement this command
 rejectMsg :: Channel -> LongLongInt -> Bool -> IO ()
 rejectMsg chan deliveryTag requeue = 
-    writeAssembly chan $ (SimpleMethod (Basic_reject
+    writeMethod chan $ (SimpleMethod (Basic_reject
         deliveryTag -- delivery_tag
         requeue -- requeue
         ))
@@ -375,7 +375,7 @@ rejectMsg chan deliveryTag requeue =
 --If @requeue==False@, the message will be redelivered to the original recipient. If @requeue==True@, the server will attempt to requeue the message, potentially then delivering it to an alternative subscriber.
 recoverMsgs :: Channel -> Bool -> IO ()
 recoverMsgs chan requeue = 
-    writeAssembly chan $ (SimpleMethod (Basic_recover
+    writeMethod chan $ (SimpleMethod (Basic_recover
         requeue -- requeue
         ))
 

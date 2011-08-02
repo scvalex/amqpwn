@@ -8,7 +8,7 @@ module Network.AMQP.Types (
         Connection(..), Channel(..),
 
         -- * Message/Envelope
-        Assembly(..), Message(..), newMsg, Envelope(..),
+        Method(..), Message(..), newMsg, Envelope(..),
         DeliveryMode(..), deliveryModeToInt, intToDeliveryMode,
 
         -- * Message payload
@@ -65,7 +65,7 @@ data Channel = Channel
       -- ^ the underlying connection
     , getInQueue :: TChan FramePayload
       -- ^ incoming frames (from Connection)
-    , getRPCQueue :: TChan (TMVar Assembly)
+    , getRPCQueue :: TChan (TMVar Method)
       -- ^ for every request, an TMVar is stored here waiting for the response
     , getChannelId :: Word16
       -- ^ channel number
@@ -78,11 +78,11 @@ data Channel = Channel
       -- ^ consumerTag => callback
     }
 
--- | An assembly is a higher-level object consisting of several frames
--- (like in amqp 0-10)
-data Assembly = SimpleMethod MethodPayload
-              | ContentMethod MethodPayload ContentHeaderProperties ByteString --method, properties, content-data
-                deriving ( Show )
+-- | A Method is a higher-level object consisting of several frames.
+data Method = SimpleMethod MethodPayload
+            | ContentMethod MethodPayload ContentHeaderProperties ByteString
+              -- ^ method, properties, content-data
+              deriving ( Show )
 
 -- Message/Envelope
 
