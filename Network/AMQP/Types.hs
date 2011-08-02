@@ -31,7 +31,6 @@ import Data.IntMap ( IntMap )
 import qualified Data.Map as M
 import Data.Typeable ( Typeable )
 import Data.Word ( Word16 )
-import Network.AMQP.Helpers ( Lock )
 import Network.Socket ( Socket )
 import Network.AMQP.Framing
 import Network.AMQP.Internal.Types
@@ -72,8 +71,6 @@ data Channel = Channel
       -- ^ channel number
     , getLastConsumerTag :: TMVar Int
       -- ^ used to assign new consumer tags
-    , getChanActive :: Lock
-      -- ^ used for flow-control. if lock is closed, no content
       -- methods will be sent
     , getChanClosed :: TMVar (Maybe String)
       -- ^ reason for closing the channel

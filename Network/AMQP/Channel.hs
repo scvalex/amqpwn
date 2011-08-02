@@ -28,7 +28,6 @@ import qualified Data.Map as M
 import Data.Maybe ( isNothing )
 import Data.String ( fromString )
 import Network.AMQP.Assembly ( readAssembly, writeAssembly, writeAssembly' )
-import Network.AMQP.Helpers ( newLock, openLock, closeLock, killLock )
 import Network.AMQP.Protocol ( throwMostRelevantAMQPException
                              , msgFromContentHeaderProperties )
 import Network.AMQP.Types ( Channel (..), Connection(..), Assembly(..)
@@ -45,7 +44,6 @@ openChannel conn = do
         newInQueue <- newTChan
         rpcQueue <- newTChan
         myLastConsumerTag <- newTMVar 0
-        ca <- newLock
 
         myChanClosed <- newTMVar Nothing
         myConsumers <- newTMVar M.empty
@@ -59,7 +57,6 @@ openChannel conn = do
                          , getRPCQueue             = rpcQueue
                          , getChannelId       = fromIntegral newChannelId
                          , getLastConsumerTag      = myLastConsumerTag
-                         , getChanActive           = ca
                          , getChanClosed           = myChanClosed
                          , getConsumers            = myConsumers }
 
@@ -132,13 +129,6 @@ channelReceiver chan = do
           closeChannel' chan
           killThread =<< myThreadId
 
-        handleAsync (SimpleMethod (Channel_flow active)) = atomically $ do
-          if active
-            then openLock $ getChanActive chan
-            else closeLock $ getChanActive chan
-        -- in theory we should respond with flow_ok but rabbitMQ 1.7 ignores that, so it doesn't matter
-          return ()
-
         --Basic.return
         handleAsync (ContentMethod (Basic_return _ _ _ _) _ _) = do
             -- TODO: implement handling; this won't be called
@@ -155,7 +145,6 @@ closeChannel' chan = atomically $ do
        IM.delete (fromIntegral $ getChannelId chan) channels
   -- mark channel as closed
   chanClosed <- takeTMVar (getChanClosed chan)
-  killLock $ getChanActive chan
   killRPCQueue $ getRPCQueue chan
   putTMVar (getChanClosed chan) (Just $ maybe "closed" id chanClosed)
     where

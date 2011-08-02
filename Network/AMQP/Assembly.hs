@@ -10,7 +10,6 @@ import qualified Control.Exception as CE
 import qualified Data.ByteString.Lazy.Char8 as LB
 import Network.AMQP.Protocol ( methodHasContent, collectContent, writeFrames
                              , throwMostRelevantAMQPException )
-import Network.AMQP.Helpers ( waitLock )
 import Network.AMQP.Types ( Channel(..), FramePayload(..), Assembly(..)
                           , getClassIDOf, Connection(..), AMQPException(..) )
 import Text.Printf ( printf )
@@ -32,9 +31,6 @@ readAssembly chan = do
 
 writeAssembly' :: Channel -> Assembly -> IO ()
 writeAssembly' chan (ContentMethod m properties msg) = do
-  -- wait iff the AMQP server instructed us to withhold sending
-  -- content data (flow control)
-  atomically $ waitLock $ getChanActive chan
   let !toWrite = [ MethodPayload m
                  , ContentHeaderPayload (getClassIDOf properties) --classID
                                         0 --weight is deprecated in AMQP 0-9
