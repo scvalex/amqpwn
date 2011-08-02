@@ -9,7 +9,7 @@ module Network.AMQP.Channel (
         Channel,
 
         -- Opening and closing channels
-        openChannel, closeChannel',
+        openChannel,
 
         -- * Something else
         request,
@@ -91,7 +91,7 @@ channelReceiver chan = do
         then CE.throw . ConnectionClosedException $
              printf "got unrequested response: %s" (show p)
         else flip putTMVar p =<< readTChan (getRPCQueue chan)
-    --handle asynchronous assemblies
+    -- handle asynchronous methods
     else handleAsync p
 
   channelReceiver chan
@@ -106,7 +106,7 @@ channelReceiver chan = do
         isResponse (SimpleMethod (Basic_cancel _ _))             = False
         isResponse _                                             = True
 
-        --Basic.Deliver: forward msg to registered consumer
+        -- basic.deliver: forward message to registered consumer
         handleAsync (ContentMethod (Basic_deliver (ShortString consumerTag) deliveryTag redelivered (ShortString myExchangeName)
                                                 (ShortString routingKey))
                                 properties myMsgBody) = do
@@ -122,8 +122,8 @@ channelReceiver chan = do
                                  }
               subscriber (msg, env)
             Nothing -> do
-              -- got a message, but have no registered subscriber;
-              -- so drop it
+              -- got a message, but have no registered subscriber, so
+              -- drop it
               return ()
 
         handleAsync (SimpleMethod (Channel_close _ (ShortString errorMsg) _ _)) = do
@@ -146,7 +146,8 @@ channelReceiver chan = do
             -- "immediate" to false
           print "BASIC.RETURN not implemented"
 
--- closes the channel internally; but doesn't tell the server
+-- | Close the channel internally, but doen't tell the server.  Note
+-- that this hangs if getChanClosed is not already set.
 closeChannel' :: Channel -> IO ()
 closeChannel' chan = atomically $ do
   channels <- takeTMVar (getChannels $ getConnection chan)
@@ -165,10 +166,10 @@ closeChannel' chan = atomically $ do
           then return ()
           else do
             x <- readTChan queue
-            tryPutTMVar x $ error "channel closed"
+            tryPutTMVar x . CE.throw $ ChannelClosedException "closed"
             killRPCQueue queue
 
--- | sends an assembly and receives the response
+-- | Send a method and wait for response.
 request :: Channel -> Assembly -> IO Assembly
 request chan m = do
     res <- atomically $ newEmptyTMVar
@@ -179,11 +180,14 @@ request chan m = do
               then do
                 atomically $ writeTChan (getRPCQueue chan) res
                 writeAssembly' chan m
-              else CE.throw $ userError "closed"
+              else CE.throw $ ChannelClosedException "closed"
 
             -- res might contain an exception, so evaluate it here
             !r <- atomically $ takeTMVar res
             return r)
-          [ CE.Handler (\ (_ :: AMQPException) -> throwMostRelevantAMQPException chan)
-          , CE.Handler (\ (_ :: CE.ErrorCall) -> throwMostRelevantAMQPException chan)
-          , CE.Handler (\ (_ :: CE.IOException) -> throwMostRelevantAMQPException chan)]
+          [ CE.Handler (\ (_ :: AMQPException) ->
+                            throwMostRelevantAMQPException chan)
+          , CE.Handler (\ (_ :: CE.ErrorCall) ->
+                            throwMostRelevantAMQPException chan)
+          , CE.Handler (\ (_ :: CE.IOException) ->
+                            throwMostRelevantAMQPException chan)]

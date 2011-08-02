@@ -83,7 +83,7 @@ openConnection host port vhost username password = do
           mapM_ Put.putWord8 [0, 0, 9, 1]
         doConnectionOpen CStarting1 sock frameMax
       doConnectionOpen CStarting1 sock frameMax = do
-          -- S: connection.start
+        -- S: connection.start
         frame <- readFrameSock sock 4096
         case frame of
           Frame 0 methodPayload ->

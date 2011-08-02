@@ -1,6 +1,7 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 
 module Network.AMQP.Assembly (
+        -- * Assemblies...
         readAssembly, writeAssembly, writeAssembly'
     ) where
 
@@ -11,23 +12,23 @@ import Network.AMQP.Protocol ( methodHasContent, collectContent, writeFrames
                              , throwMostRelevantAMQPException )
 import Network.AMQP.Helpers ( waitLock )
 import Network.AMQP.Types ( Channel(..), FramePayload(..), Assembly(..)
-                          , getClassIDOf, Connection(..), AMQPException )
+                          , getClassIDOf, Connection(..), AMQPException(..) )
+import Text.Printf ( printf )
 
-------------- ASSEMBLY -------------------------
--- | reads all frames necessary to build an assembly
+-- | Read an entire assembly (multiple frames) and return it.
 readAssembly :: TChan FramePayload -> IO Assembly
 readAssembly chan = do
   m <- atomically $ readTChan chan
   case m of
-    MethodPayload p -> --got a method frame
-      if methodHasContent m
-        then do
-          --several frames containing the content will follow, so read them
-          (props, msg) <- collectContent chan
-          return $ ContentMethod p props msg
-        else do
-          return $ SimpleMethod p
-    x -> error $ "didn't expect frame: " ++ (show x)
+    MethodPayload p ->           -- got a method frame
+         if methodHasContent m
+           then do
+             (props, msg) <- collectContent chan
+             return $ ContentMethod p props msg
+           else do
+             return $ SimpleMethod p
+    unframe -> CE.throw . ConnectionClosedException $
+                  printf "unexpected frame: %s" (show unframe)
 
 writeAssembly' :: Channel -> Assembly -> IO ()
 writeAssembly' chan (ContentMethod m properties msg) = do
