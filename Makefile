@@ -19,7 +19,7 @@ doc: build
 
 .PHONY: all framing clean test doc
 
-dist/setup-config: amqp.cabal
+dist/setup-config: amqpwn.cabal
 	cabal configure
 
 $(FRAMING_DATA): Codegen/Codegen.hs Codegen/amqp0-9-1.xml

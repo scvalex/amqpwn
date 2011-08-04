@@ -1,4 +1,4 @@
-Name:                amqp
+Name:                amqpwn
 Version:             0.3.0
 Synopsis:            Client library for AMQP servers (currently only RabbitMQ)
 Description:         Client library for AMQP servers (currently only RabbitMQ)
@@ -9,7 +9,7 @@ Author:              Holger Reinhardt, Alexandru Scvortov
 Category:            Network
 Maintainer:          Alexandru Scvortov <scvalex@gmail.com>
 Build-Type:          Simple
-Homepage:            https://github.com/scvalex/amqp
+Homepage:            https://github.com/scvalex/amqpwn
 Cabal-Version:       >=1.6
 
 Extra-source-files:  examples/ExampleConsumer.hs,
@@ -23,7 +23,7 @@ Data-files:          Codegen/amqp0-9-1.xml,
 
 Source-repository    head
   Type:              git
-  Location:          git://github.com/scvalex/amqp.git
+  Location:          git://github.com/scvalex/amqpwn.git
 
 
 Library
