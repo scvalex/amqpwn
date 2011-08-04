@@ -2,8 +2,10 @@
 
 import Control.Concurrent ( forkIO, killThread )
 import Control.Concurrent.MVar ( newEmptyMVar, putMVar, takeMVar, tryPutMVar )
-import Control.Exception ( handle, IOException )
-import Network.AMQP ( openConnection, closeConnectionNormal
+import Control.Exception ( handle, bracket, IOException )
+import Control.Monad ( replicateM, mapM_ )
+import Network.AMQP ( Connection, openConnection, closeConnectionNormal
+                    , openChannel, closeChannelNormal
                     , addConnectionClosedHandler )
 import Network.AMQP.Types ( AMQPException(..) )
 import System.Exit ( exitFailure )
@@ -23,8 +25,10 @@ main = do
 tests = test [ "alwaysPass" ~: TestCase $ do
                  return ()
              , "connectionOpenClose" ~: TestCase $ do
-                 conn <- openConnection "localhost" 5672 "/" "guest" "guest"
-                 closeConnectionNormal conn
+                 closeConnectionNormal =<< openDefaultConnection
+             , "connectionOpenClose10" ~: TestCase $ do
+                 conns <- replicateM 10 openDefaultConnection
+                 mapM_ closeConnectionNormal conns
              , "connectionNoServer" ~: TestCase $ do
                  handle (\(_ :: IOException) -> return ()) $ do
                      openConnection "localhost" 5600 "/" "guest" "guest"
@@ -34,7 +38,7 @@ tests = test [ "alwaysPass" ~: TestCase $ do
                      openConnection "localhost" 5672 "/" "guest" "geust"
                      assertFailure "connected with wrong password"
              , "connectionCloseHandler" ~: TestCase $ do
-                 conn <- openConnection "localhost" 5672 "/" "guest" "guest"
+                 conn <- openDefaultConnection
                  m <- newEmptyMVar
                  addConnectionClosedHandler conn True (putMVar m (Right ()))
                  closeConnectionNormal conn
@@ -46,4 +50,18 @@ tests = test [ "alwaysPass" ~: TestCase $ do
                  case v of
                    Left err -> assertFailure err
                    Right ()  -> killThread tid
+             , "channelLifecycle" ~: TestCase $ do
+                 withConnection $ \conn -> do
+                   ch <- openChannel conn
+                   closeChannelNormal ch
+             , "channelLifecycle10" ~: TestCase $ do
+                 withConnection $ \conn -> do
+                   chs <- replicateM 10 (openChannel conn)
+                   mapM_ closeChannelNormal chs
              ]
+
+openDefaultConnection :: IO Connection
+openDefaultConnection = openConnection "localhost" 5672 "/" "guest" "guest"
+
+withConnection :: (Connection -> IO ()) -> IO ()
+withConnection = bracket openDefaultConnection closeConnectionNormal

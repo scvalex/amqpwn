@@ -9,7 +9,7 @@ module Network.AMQP.Channel (
         Channel,
 
         -- Opening and closing channels
-        openChannel,
+        openChannel, closeChannelNormal,
 
         -- * Something else
         request,
@@ -21,12 +21,11 @@ import Control.Concurrent ( forkIO, killThread, myThreadId )
 import Control.Concurrent.STM ( STM, atomically, TChan, newTChan, isEmptyTChan
                               , writeTChan, readTChan, TMVar, newTMVar
                               , newEmptyTMVar, takeTMVar, putTMVar, readTMVar
-                              , tryPutTMVar )
+                              , tryPutTMVar, isEmptyTMVar )
 import qualified Control.Exception as CE
 import qualified Data.ByteString.Lazy.Char8 as LB
 import qualified Data.IntMap as IM
 import qualified Data.Map as M
-import Data.Maybe ( isNothing )
 import Data.String ( fromString )
 import Network.AMQP.Protocol ( methodHasContent, collectContent, writeFrames
                              , throwMostRelevantAMQPException
@@ -38,8 +37,6 @@ import Network.AMQP.Types ( Channel (..), Connection(..), Method(..)
 import Text.Printf ( printf )
 
 -- | Open a new channel on the connection.
---
--- FIXME: Implement channel.close.
 openChannel :: Connection -> IO Channel
 openChannel conn = do
     newChannel <- atomically $ do
@@ -47,7 +44,7 @@ openChannel conn = do
         rpcQueue <- newTChan
         myLastConsumerTag <- newTMVar 0
 
-        myChanClosed <- newTMVar Nothing
+        myChanClosed <- newEmptyTMVar
         myConsumers <- newTMVar M.empty
 
         -- get a new unused channelID
@@ -57,7 +54,7 @@ openChannel conn = do
         return $ Channel { getConnection           = conn
                          , getInQueue              = newInQueue
                          , getRPCQueue             = rpcQueue
-                         , getChannelId       = fromIntegral newChannelId
+                         , getChannelId            = fromIntegral newChannelId
                          , getLastConsumerTag      = myLastConsumerTag
                          , getChanClosed           = myChanClosed
                          , getConsumers            = myConsumers }
@@ -82,7 +79,6 @@ channelReceiver :: Channel -> IO ()
 channelReceiver chan = do
   -- read incoming frames; they are put there by a Connection thread
   p <- readMethod $ getInQueue chan
-
   if isResponse p
     then atomically $ do
       emp <- isEmptyTChan $ getRPCQueue chan
@@ -127,7 +123,8 @@ channelReceiver chan = do
 
         handleAsync (SimpleMethod (Channel_close _ (ShortString errorMsg) _ _)) = do
 
-          atomically $ putTMVar (getChanClosed chan) (Just errorMsg)
+          atomically $ putTMVar (getChanClosed chan) errorMsg
+          unsafeWriteMethod chan (SimpleMethod Channel_close_ok)
           closeChannel' chan
           killThread =<< myThreadId
 
@@ -137,8 +134,20 @@ channelReceiver chan = do
             -- "immediate" to false
           CE.throw $ ConnectionClosedException "basic.return not implemented"
 
+        handleAsync val = do
+          CE.throw . ConnectionClosedException $
+            printf "not implemented: %s" (show val)
+
+-- | Initiate a normal channel close.
+closeChannelNormal :: Channel -> IO ()
+closeChannelNormal chan = do
+  request chan . SimpleMethod $
+          Channel_close 200 (fromString "Closing") 0 0
+  atomically $ putTMVar (getChanClosed chan) "Closing"
+  closeChannel' chan
+
 -- | Close the channel internally, but doen't tell the server.  Note
--- that this hangs if getChanClosed is not already set.
+-- that this hangs if @getChanClosed@ is not already set.
 closeChannel' :: Channel -> IO ()
 closeChannel' chan = atomically $ do
   channels <- takeTMVar (getChannels $ getConnection chan)
@@ -147,7 +156,7 @@ closeChannel' chan = atomically $ do
   -- mark channel as closed
   chanClosed <- takeTMVar (getChanClosed chan)
   killRPCQueue $ getRPCQueue chan
-  putTMVar (getChanClosed chan) (Just $ maybe "closed" id chanClosed)
+  putTMVar (getChanClosed chan) chanClosed
     where
       killRPCQueue :: TChan (TMVar a) -> STM ()
       killRPCQueue queue = do
@@ -165,12 +174,13 @@ request chan m = do
     res <- atomically $ newEmptyTMVar
     CE.catches
           (do
-            chanClosed <- atomically $ readTMVar (getChanClosed chan)
-            if isNothing chanClosed
+            notClosed <- atomically $ isEmptyTMVar (getChanClosed chan)
+            if notClosed
               then do
                 atomically $ writeTChan (getRPCQueue chan) res
                 unsafeWriteMethod chan m
-              else CE.throw $ ChannelClosedException "closed"
+              else do
+                CE.throw $ ChannelClosedException "closed"
 
             -- res might contain an exception, so evaluate it here
             !r <- atomically $ takeTMVar res

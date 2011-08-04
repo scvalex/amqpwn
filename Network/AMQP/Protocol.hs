@@ -6,7 +6,8 @@ module Network.AMQP.Protocol (
         throwMostRelevantAMQPException
     ) where
 
-import Control.Concurrent.STM ( atomically, TChan, readTChan, readTMVar )
+import Control.Concurrent.STM ( atomically, TChan, readTChan, readTMVar
+                              , isEmptyTMVar )
 import qualified Control.Exception as CE
 import Data.Binary
 import Data.Binary.Get
@@ -124,7 +125,10 @@ throwMostRelevantAMQPException chan = atomically $ do
   case cc of
     Just r -> CE.throw $ ConnectionClosedException r
     Nothing -> do
-            chc <- readTMVar $ getChanClosed chan
-            case chc of
-              Just r -> CE.throw $ ChannelClosedException r
-              Nothing -> CE.throw $ ConnectionClosedException "unknown reason"
+            dontHaveReason <- isEmptyTMVar $ getChanClosed chan
+            if dontHaveReason
+               then do
+                 CE.throw $ ConnectionClosedException "unknown reason"
+              else do
+                CE.throw . ChannelClosedException =<<
+                  readTMVar (getChanClosed chan)
