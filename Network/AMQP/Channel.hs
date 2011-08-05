@@ -159,9 +159,8 @@ closeChannel' chan = atomically $ do
   putTMVar (getChannels $ getConnection chan) $
        IM.delete (fromIntegral $ getChannelId chan) channels
   -- mark channel as closed
-  chanClosed <- takeTMVar (getChanClosed chan)
+  chanClosed <- readTMVar (getChanClosed chan)
   killRPCQueue chanClosed $ getRPCQueue chan
-  putTMVar (getChanClosed chan) chanClosed
     where
       killRPCQueue :: AMQPException -> TChan (TMVar a) -> STM ()
       killRPCQueue reason queue = do
