@@ -178,7 +178,7 @@ openConnection host port vhost username password = do
         (channels, handlers) <- atomically $ do
           -- mark as closed
           connClosed <- takeTMVar (getConnClosed conn)
-          putTMVar (getConnClosed conn) (Just $ maybe "closed" id connClosed)
+          putTMVar (getConnClosed conn) (Just $ maybe "Closed" id connClosed)
 
           -- clear channel threads
           channels <- takeTMVar (getChannels conn)

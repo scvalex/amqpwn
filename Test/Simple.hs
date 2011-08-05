@@ -64,6 +64,12 @@ tests = test [ "alwaysPass" ~: TestCase $ do
                    closeChannelNormal ch
                    handle (\(ChannelClosedException "Normal") -> return ())
                           (closeChannelNormal ch)
+             , "channelClosedConnection" ~: TestCase $ do
+                 conn <- openDefaultConnection
+                 ch <- openChannel conn
+                 closeConnectionNormal conn
+                 handle (\(ConnectionClosedException "Closed") -> return ())
+                        (closeChannelNormal ch)
              ]
 
 openDefaultConnection :: IO Connection
