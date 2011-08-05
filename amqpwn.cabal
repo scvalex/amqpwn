@@ -8,7 +8,7 @@ License-file:        LICENSE
 Author:              Holger Reinhardt, Alexandru Scvortov
 Category:            Network
 Maintainer:          Alexandru Scvortov <scvalex@gmail.com>
-Build-Type:          Simple
+Build-Type:          Custom
 Homepage:            https://github.com/scvalex/amqpwn
 Cabal-Version:       >=1.6
 
