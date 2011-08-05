@@ -2,9 +2,7 @@ FRAMING_DATA := Network/AMQP/FramingData.hs
 
 all: build
 
-framing: $(FRAMING_DATA)
-
-build: dist/setup-config framing
+build: dist/setup-config
 	cabal build
 
 clean:
@@ -17,10 +15,7 @@ test: build
 doc: build
 	cabal haddock --internal
 
-.PHONY: all framing clean test doc
+.PHONY: all clean test doc
 
 dist/setup-config: amqpwn.cabal
 	cabal configure
-
-$(FRAMING_DATA): Codegen/Codegen.hs Codegen/amqp0-9-1.xml
-	runhaskell $+ > /tmp/Framing.hs && cp /tmp/Framing.hs $@

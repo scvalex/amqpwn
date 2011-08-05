@@ -1,3 +1,7 @@
+module Codegen.Codegen (
+        main, run
+    ) where
+
 import Data.Char
 import qualified Data.List as L
 import qualified Data.Map as M
@@ -16,6 +20,10 @@ import Text.XML.Light.Proc
 main :: IO ()
 main = do
   [ specFn ] <- getArgs
+  putStr =<< run specFn
+
+run :: FilePath -> IO String
+run specFn = do
   spec <- readFile specFn
   let parsed = parseXML spec
   let !(Elem e) = parsed !! 2
@@ -27,15 +35,17 @@ main = do
   -- read classes
   let classes = map readClass $ findChildren (unqual "class") e :: [Class]
 
-  putStrLn "module Network.AMQP.FramingData where\n\
-           \\n\
-           \import Network.AMQP.FramingTypes\n\
-           \import Data.Map ( fromList )\n"
-
-  putStrLn $ unlines [ "classes :: [Class]"
-                     , printf "classes = %s" (listShow classes)
-                     , "domainMap :: DomainMap"
-                     , printf "domainMap = %s" (show domainMap) ]
+  return $ L.intercalate "\n"
+         [ "module Network.AMQP.FramingData where"
+         , ""
+         , "import Network.AMQP.FramingTypes"
+         , "import Data.Map ( fromList )"
+         , ""
+         , "classes :: [Class]"
+         , printf "classes = %s" (listShow classes)
+         , ""
+         , "domainMap :: DomainMap"
+         , printf "domainMap = %s" (show domainMap) ]
 
 ---- contentheader class ids -----
 readDomain d =
