@@ -46,8 +46,9 @@ Some function calls can make the AMQP server throw an AMQP exception, which has 
 
 -}
 module Network.AMQP (
-    module Network.AMQP.Connection,
     module Network.AMQP.Channel,
+    module Network.AMQP.Connection,
+    module Network.AMQP.Types,
 
     -- * Exchanges
     ExchangeOpts(..),
@@ -65,9 +66,6 @@ module Network.AMQP (
     
     
     -- * Messaging
-    DeliveryMode(..),
-    newMsg,
-    Envelope(..),
     ConsumerTag,
     Ack(..),
     consumeMsgs,
@@ -87,10 +85,6 @@ module Network.AMQP (
     
     -- * Flow Control
     flow,
-    
-    
-    -- * Exceptions
-    AMQPException(..)
 ) where
 
 

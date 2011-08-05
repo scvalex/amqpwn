@@ -4,9 +4,11 @@ import Control.Concurrent ( forkIO, killThread )
 import Control.Concurrent.MVar ( newEmptyMVar, putMVar, takeMVar, tryPutMVar )
 import Control.Exception ( handle, bracket, IOException )
 import Control.Monad ( replicateM, mapM_ )
+import Data.String ( fromString )
 import Network.AMQP ( Connection, openConnection, closeConnectionNormal
-                    , openChannel, closeChannelNormal
-                    , addConnectionClosedHandler )
+                    , Channel, openChannel, closeChannelNormal
+                    , addConnectionClosedHandler, request, Method(..)
+                    , MethodPayload(..) )
 import Network.AMQP.Types ( AMQPException(..) )
 import System.Exit ( exitFailure )
 import System.Posix.Unistd ( sleep )
@@ -62,14 +64,22 @@ tests = test [ "alwaysPass" ~: TestCase $ do
                  withConnection $ \conn -> do
                    ch <- openChannel conn
                    closeChannelNormal ch
-                   handle (\(ChannelClosedException "Normal") -> return ())
-                          (closeChannelNormal ch)
+                   handle (\(ChannelClosedException _) -> return ()) $ do
+                     closeChannelNormal ch
+                     assertFailure "managed to close closed channel"
              , "channelClosedConnection" ~: TestCase $ do
                  conn <- openDefaultConnection
                  ch <- openChannel conn
                  closeConnectionNormal conn
-                 handle (\(ConnectionClosedException "Closed") -> return ())
-                        (closeChannelNormal ch)
+                 handle (\(ConnectionClosedException _) -> return ()) $ do
+                   closeChannelNormal ch
+                   assertFailure "closed channel on closed connection"
+             , "prohibitedMethod" ~: TestCase $ do
+                 withChannel $ \ch -> do
+                   handle (\(ClientException _) -> return ()) $ do
+                     request ch (SimpleMethod (Channel_open (fromString "")))
+                     assertFailure "sending channel.open worked"
+                   return ()
              ]
 
 openDefaultConnection :: IO Connection
@@ -77,3 +87,7 @@ openDefaultConnection = openConnection "localhost" 5672 "/" "guest" "guest"
 
 withConnection :: (Connection -> IO ()) -> IO ()
 withConnection = bracket openDefaultConnection closeConnectionNormal
+
+withChannel :: (Channel -> IO ()) -> IO ()
+withChannel act = withConnection $ \conn -> do
+                    bracket (openChannel conn) closeChannelNormal act

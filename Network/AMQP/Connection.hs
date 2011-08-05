@@ -10,9 +10,6 @@
 -- Outgoing Data: Application -> Socket
 
 module Network.AMQP.Connection (
-        -- * Opaque connection type
-        Connection,
-
         -- * Opening and closing connections
         openConnection, addConnectionClosedHandler,
         closeConnection, closeConnectionNormal

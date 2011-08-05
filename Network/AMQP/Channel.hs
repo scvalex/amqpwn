@@ -5,9 +5,6 @@
 -- thread in your application that talks to the AMQP server (but you
 -- don't have to as channels are thread-safe)
 module Network.AMQP.Channel (
-        -- * Opaque channel type
-        Channel,
-
         -- Opening and closing channels
         openChannel, closeChannel, closeChannelNormal,
 
@@ -71,7 +68,7 @@ openChannel conn = do
                          channels
 
     (SimpleMethod (Channel_open_ok _)) <-
-        request newChannel . SimpleMethod $ Channel_open (fromString "")
+        request' newChannel . SimpleMethod $ Channel_open (fromString "")
     return newChannel
 
 -- | Process: Maintains the incoming method queue for the channel.
@@ -146,8 +143,8 @@ closeChannelNormal = closeChannel "Normal"
 -- | Initiate a channel close.
 closeChannel :: String -> Channel -> IO ()
 closeChannel reason chan = do
-  request chan . SimpleMethod $
-          Channel_close 200 (fromString reason) 0 0
+  request' chan . SimpleMethod $
+           Channel_close 200 (fromString reason) 0 0
   atomically $ putTMVar (getChanClosed chan) (ChannelClosedException reason)
   closeChannel' chan
 
@@ -172,9 +169,16 @@ closeChannel' chan = atomically $ do
             tryPutTMVar x $ CE.throw reason
             killRPCQueue reason queue
 
--- | Send a method and wait for response.
+-- | Send a method and wait for response.  Disallow sending certain methods such as @channel.open@.
 request :: Channel -> Method -> IO Method
-request chan m = do
+request _ (SimpleMethod (Channel_open _)) =
+    CE.throw $ ClientException "sending channel.open prohibited; \
+                               \use openChannel instead"
+request chan method = request' chan method
+
+-- | Send a method and wait for response.
+request' :: Channel -> Method -> IO Method
+request' chan m = do
     res <- atomically $ newEmptyTMVar
     CE.catches
           (do

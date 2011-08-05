@@ -168,6 +168,7 @@ instance Enum FramePayload where
 data AMQPException = ChannelClosedException String
                    | ConnectionClosedException String
                    | ConnectionStartException String
+                   | ClientException String
                      deriving (Typeable, Show, Ord, Eq)
 
 instance Exception AMQPException
