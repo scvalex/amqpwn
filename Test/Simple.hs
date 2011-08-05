@@ -58,6 +58,12 @@ tests = test [ "alwaysPass" ~: TestCase $ do
                  withConnection $ \conn -> do
                    chs <- replicateM 10 (openChannel conn)
                    mapM_ closeChannelNormal chs
+             , "channelDoublyClosed" ~: TestCase $ do
+                 withConnection $ \conn -> do
+                   ch <- openChannel conn
+                   closeChannelNormal ch
+                   handle (\(ChannelClosedException "Normal") -> return ())
+                          (closeChannelNormal ch)
              ]
 
 openDefaultConnection :: IO Connection

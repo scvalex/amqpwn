@@ -9,7 +9,7 @@ module Network.AMQP.Channel (
         Channel,
 
         -- Opening and closing channels
-        openChannel, closeChannelNormal,
+        openChannel, closeChannel, closeChannelNormal,
 
         -- * Something else
         request,
@@ -26,7 +26,7 @@ import qualified Control.Exception as CE
 import qualified Data.ByteString.Lazy.Char8 as LB
 import qualified Data.IntMap as IM
 import qualified Data.Map as M
-import Data.String ( fromString )
+import Data.String ( IsString(..) )
 import Network.AMQP.Protocol ( methodHasContent, collectContent, writeFrames
                              , throwMostRelevantAMQPException
                              , msgFromContentHeaderProperties )
@@ -123,7 +123,8 @@ channelReceiver chan = do
 
         handleAsync (SimpleMethod (Channel_close _ (ShortString errorMsg) _ _)) = do
 
-          atomically $ putTMVar (getChanClosed chan) errorMsg
+          atomically $ putTMVar (getChanClosed chan)
+                                (ChannelClosedException errorMsg)
           unsafeWriteMethod chan (SimpleMethod Channel_close_ok)
           closeChannel' chan
           killThread =<< myThreadId
@@ -140,10 +141,14 @@ channelReceiver chan = do
 
 -- | Initiate a normal channel close.
 closeChannelNormal :: Channel -> IO ()
-closeChannelNormal chan = do
+closeChannelNormal = closeChannel "Normal"
+
+-- | Initiate a channel close.
+closeChannel :: String -> Channel -> IO ()
+closeChannel reason chan = do
   request chan . SimpleMethod $
-          Channel_close 200 (fromString "Closing") 0 0
-  atomically $ putTMVar (getChanClosed chan) "Closing"
+          Channel_close 200 (fromString reason) 0 0
+  atomically $ putTMVar (getChanClosed chan) (ChannelClosedException reason)
   closeChannel' chan
 
 -- | Close the channel internally, but doen't tell the server.  Note
@@ -155,18 +160,18 @@ closeChannel' chan = atomically $ do
        IM.delete (fromIntegral $ getChannelId chan) channels
   -- mark channel as closed
   chanClosed <- takeTMVar (getChanClosed chan)
-  killRPCQueue $ getRPCQueue chan
+  killRPCQueue chanClosed $ getRPCQueue chan
   putTMVar (getChanClosed chan) chanClosed
     where
-      killRPCQueue :: TChan (TMVar a) -> STM ()
-      killRPCQueue queue = do
+      killRPCQueue :: AMQPException -> TChan (TMVar a) -> STM ()
+      killRPCQueue reason queue = do
         emp <- isEmptyTChan queue
         if emp
           then return ()
           else do
             x <- readTChan queue
-            tryPutTMVar x . CE.throw $ ChannelClosedException "closed"
-            killRPCQueue queue
+            tryPutTMVar x $ CE.throw reason
+            killRPCQueue reason queue
 
 -- | Send a method and wait for response.
 request :: Channel -> Method -> IO Method
@@ -180,7 +185,7 @@ request chan m = do
                 atomically $ writeTChan (getRPCQueue chan) res
                 unsafeWriteMethod chan m
               else do
-                CE.throw $ ChannelClosedException "closed"
+                CE.throw =<< atomically (readTMVar $ getChanClosed chan)
 
             -- res might contain an exception, so evaluate it here
             !r <- atomically $ takeTMVar res

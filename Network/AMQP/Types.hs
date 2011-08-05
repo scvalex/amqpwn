@@ -72,7 +72,7 @@ data Channel = Channel
     , getLastConsumerTag :: TMVar Int
       -- ^ used to assign new consumer tags
       -- methods will be sent
-    , getChanClosed :: TMVar String
+    , getChanClosed :: TMVar AMQPException
       -- ^ reason for closing the channel
     , getConsumers :: TMVar (M.Map String ((Message, Envelope) -> IO ()))
       -- ^ consumerTag => callback

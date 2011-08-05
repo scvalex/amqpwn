@@ -127,8 +127,5 @@ throwMostRelevantAMQPException chan = atomically $ do
     Nothing -> do
             dontHaveReason <- isEmptyTMVar $ getChanClosed chan
             if dontHaveReason
-               then do
-                 CE.throw $ ConnectionClosedException "unknown reason"
-              else do
-                CE.throw . ChannelClosedException =<<
-                  readTMVar (getChanClosed chan)
+              then CE.throw $ ConnectionClosedException "unknown reason"
+              else CE.throw =<< readTMVar (getChanClosed chan)
