@@ -5,11 +5,13 @@
 -- thread in your application that talks to the AMQP server (but you
 -- don't have to as channels are thread-safe)
 module Network.AMQP.Channel (
-        -- Opening and closing channels
+        -- * Opening and closing channels
         openChannel, closeChannel, closeChannelNormal,
 
-        -- * Something else
+        -- * Synchronous method calls
         request,
+
+        -- * Low-level method processing
         readMethod, writeMethod
     ) where
 

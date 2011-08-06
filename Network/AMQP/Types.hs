@@ -46,14 +46,14 @@ data Connection = Connection
       -- ^ open channels (channelID => (Channel, ChannelThread))
     , getMaxFrameSize :: Int
       -- ^ negotiated maximum frame size
-    , getConnClosed :: TMVar (Maybe String)
+    , getConnClosed :: TMVar AMQPException
       -- ^ reason for closure, if closed
     , getConnClosedLock :: TMVar ()
       -- ^ used by closeConnection to block until connection-close
       -- handshake is complete
     , getConnWriteLock :: TMVar ()
       -- ^ to ensure atomic writes to the socket
-    , getConnCloseHandlers :: TMVar [IO ()]
+    , getConnCloseHandlers :: TMVar [AMQPException -> IO ()]
       -- ^ handlers to be notified of connection closures
     , getLastChannelId :: TMVar Int
       -- ^ for auto-incrementing the channelIDs

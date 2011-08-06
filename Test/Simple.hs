@@ -42,7 +42,7 @@ tests = test [ "alwaysPass" ~: TestCase $ do
              , "connectionCloseHandler" ~: TestCase $ do
                  conn <- openDefaultConnection
                  m <- newEmptyMVar
-                 addConnectionClosedHandler conn True (putMVar m (Right ()))
+                 addConnectionClosedHandler conn (\e -> putMVar m (Right e))
                  closeConnectionNormal conn
                  tid <- forkIO $ do
                          sleep 1
@@ -50,8 +50,10 @@ tests = test [ "alwaysPass" ~: TestCase $ do
                          return ()
                  v <- takeMVar m
                  case v of
-                   Left err -> assertFailure err
-                   Right ()  -> killThread tid
+                   Left err ->
+                       assertFailure err
+                   Right (ConnectionClosedException "Normal") ->
+                       killThread tid
              , "channelLifecycle" ~: TestCase $ do
                  withConnection $ \conn -> do
                    ch <- openChannel conn

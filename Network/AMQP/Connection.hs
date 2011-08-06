@@ -19,7 +19,7 @@ import Control.Applicative ( (<$>) )
 import Control.Concurrent ( killThread, myThreadId, forkIO )
 import Control.Concurrent.STM ( atomically, newTMVar, newEmptyTMVar
                               , takeTMVar, putTMVar, tryPutTMVar, readTMVar
-                              , writeTChan )
+                              , writeTChan, isEmptyTMVar )
 import qualified Control.Exception as CE
 import Data.Binary ( Binary(..) )
 import qualified Data.Binary.Put as Put
@@ -66,10 +66,11 @@ openConnection host port vhost username password = do
   connect sock (SockAddrInet (fromIntegral port) addr)
 
   conn <- doConnectionOpen CInitiating sock 0
-
   -- spawn the connectionReceiver
-  forkIO $ CE.finally (connectionReceiver conn) (finalizeConnection conn)
-
+  forkIO $ (connectionReceiver conn)
+           `CE.catch` (\(e :: AMQPException) -> finalizeConnection conn e)
+           `CE.finally` (finalizeConnection conn $
+                         ConnectionClosedException "Normal")
   return conn
     where
       doConnectionOpen :: ConnectingState -> Socket -> Int -> IO Connection
@@ -153,7 +154,7 @@ openConnection host port vhost username password = do
       doConnectionOpen COpen sock frameMax = atomically $ do
         -- Connection established!
         myConnChannels <- newTMVar IM.empty
-        cClosed <- newTMVar Nothing
+        cClosed <- newEmptyTMVar
         ccl <- newEmptyTMVar
         writeLock <- newTMVar ()
         myConnClosedHandlers <- newTMVar []
@@ -167,15 +168,14 @@ openConnection host port vhost username password = do
                             , getConnCloseHandlers = myConnClosedHandlers
                             , getLastChannelId = lastChanId
                             }
-      finalizeConnection conn = do
+      finalizeConnection conn reason = do
         -- try closing socket
         CE.catch (sClose $ getSocket conn) $ \(_ :: CE.SomeException) ->
             return ()
 
         (channels, handlers) <- atomically $ do
           -- mark as closed
-          connClosed <- takeTMVar (getConnClosed conn)
-          putTMVar (getConnClosed conn) (Just $ maybe "Closed" id connClosed)
+          tryPutTMVar (getConnClosed conn) reason
 
           -- clear channel threads
           channels <- takeTMVar (getChannels conn)
@@ -192,7 +192,7 @@ openConnection host port vhost username password = do
         -- kill channels threads
         mapM_ (\c -> killThread $ snd c) (IM.elems channels)
         -- notify connection-close-handlers
-        sequence handlers
+        mapM_ ($ reason) handlers
 
 -- | Close a connection normally.
 closeConnectionNormal :: Connection -> IO ()
@@ -225,23 +225,18 @@ closeConnection replyCode replyText conn = do
 
 -- | Add a handler that will be called after the connection is closed
 -- either by calling 'closeConnection' or by an exception.  If the
--- if-closed parameter is True and the connection is already closed,
--- the handler will be called immediately.  If if-closed is False and
--- the connection is already closed, the handler will never be called.
-addConnectionClosedHandler :: Connection -- ^ the connection
-                           -> Bool      -- ^ if-closed
-                           -> IO ()      -- ^ handler
+-- connection is already closed, the handler is called immediately in
+-- the current thread.
+addConnectionClosedHandler :: Connection                -- ^ the connection
+                           -> (AMQPException -> IO ()) -- ^ handler
                            -> IO ()
-addConnectionClosedHandler conn ifClosed handler = do
-  connClosed <- atomically $ readTMVar (getConnClosed conn)
-  case connClosed of
-    -- connection is already closed, so call the handler directly
-    Just _ | ifClosed == True -> do
-        handler
-    -- otherwise add it to the list
-    _ -> atomically $ do
-        handlers <- takeTMVar (getConnCloseHandlers conn)
-        putTMVar (getConnCloseHandlers conn) (handler:handlers)
+addConnectionClosedHandler conn handler = do
+  notConnClosed <- atomically $ isEmptyTMVar (getConnClosed conn)
+  if notConnClosed
+     then atomically $ do
+       handlers <- takeTMVar (getConnCloseHandlers conn)
+       putTMVar (getConnCloseHandlers conn) (handler:handlers)
+     else handler =<< atomically (readTMVar $ getConnClosed conn)
 
 -- | Process: reads incoming frames from socket and forwards them to
 -- opened channels.
@@ -254,14 +249,14 @@ connectionReceiver conn = do
         where
           -- Forward to channel0
           forwardToChannel 0 (MethodPayload Connection_close_ok) = do
-                            atomically $ tryPutTMVar (getConnClosed conn)
-                                                     (Just "closed by user")
-                            killThread =<< myThreadId
+              atomically $ tryPutTMVar (getConnClosed conn)
+                                       (ConnectionClosedException "Normal")
+              killThread =<< myThreadId
           forwardToChannel 0 (MethodPayload (Connection_close _ s _ _ )) = do
-                            let (ShortString errorMsg) = s
-                            atomically $ tryPutTMVar (getConnClosed conn)
-                                                     (Just errorMsg)
-                            killThread =<< myThreadId
+              let (ShortString errorMsg) = s
+              atomically $ tryPutTMVar (getConnClosed conn)
+                                       (ConnectionClosedException errorMsg)
+              killThread =<< myThreadId
           forwardToChannel 0 msg =
               CE.throw . ConnectionClosedException $
                 printf "unexpected msg on channel zero: %s" (show msg)

@@ -117,15 +117,18 @@ msgFromContentHeaderProperties (CHBasic content_type _ _ delivery_mode _ correla
           fromShortString (Just (ShortString s)) = Just s
           fromShortString _ = Nothing
 
--- this throws an AMQPException based on the status of the connection and the channel
--- if both connection and channel are closed, it will throw a ConnectionClosedException
+-- Throws an AMQPException based on the status of the connection and
+-- of the channel.  If both connection and channel are closed, throw
+-- the connection's exception.  Otherwise throw the channel's
+-- exception.  If neither are closed, throw a ClientExeption.
 throwMostRelevantAMQPException :: Channel -> IO b
 throwMostRelevantAMQPException chan = atomically $ do
-  cc <- readTMVar $ getConnClosed $ getConnection chan
-  case cc of
-    Just r -> CE.throw $ ConnectionClosedException r
-    Nothing -> do
-            dontHaveReason <- isEmptyTMVar $ getChanClosed chan
-            if dontHaveReason
-              then CE.throw $ ConnectionClosedException "unknown reason"
-              else CE.throw =<< readTMVar (getChanClosed chan)
+  notConnClosed <- isEmptyTMVar (getConnClosed $ getConnection chan)
+  if notConnClosed
+     then do
+       dontHaveReason <- isEmptyTMVar $ getChanClosed chan
+       if dontHaveReason
+         then CE.throw $ ClientException "Unknown Reason"
+         else CE.throw =<< readTMVar (getChanClosed chan)
+     else do
+       CE.throw =<< readTMVar (getConnClosed $ getConnection chan)
