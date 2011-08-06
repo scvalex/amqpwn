@@ -1,8 +1,12 @@
 #!/usr/bin/env runhaskell
 
 \begin{code}
-import Distribution.Simple
+{-# LANGUAGE ScopedTypeVariables #-}
+
 import Codegen.Codegen ( run )
+import qualified Control.Exception as CE
+import Distribution.Simple
+import System.Directory ( getModificationTime )
 
 main :: IO ()
 main = defaultMainWithHooks myHooks
@@ -10,10 +14,29 @@ main = defaultMainWithHooks myHooks
 myHooks :: UserHooks
 myHooks = simpleUserHooks {
             buildHook = \pd lbi uh bf -> do
-                         putStrLn "Generating FramingData..."
-                         src <- run "Codegen/amqp0-9-1.xml"
-                         writeFile "Network/AMQP/FramingData.hs" src
-                         buildHook simpleUserHooks pd lbi uh bf
+                          maybeGenerateFramingData
+                          buildHook simpleUserHooks pd lbi uh bf
           }
+
+framingDataFile, amqpSpecFile, codegenFile :: FilePath
+framingDataFile = "Network/AMQP/FramingData.hs"
+amqpSpecFile = "Codegen/amqp0-9-1.xml"
+codegenFile = "Codegen/Codegen.hs"
+
+maybeGenerateFramingData :: IO ()
+maybeGenerateFramingData = do
+  CE.handle (\(e :: IOError) -> generateFramingData) $ do
+      mod1 <- getModificationTime framingDataFile
+      mod2 <- getModificationTime amqpSpecFile
+      mod3 <- getModificationTime codegenFile
+      if mod1 < mod2 || mod1 < mod3
+        then fail "FramingData out of date"
+        else return ()
+
+generateFramingData :: IO ()
+generateFramingData = do
+  putStrLn "Generating FramingData..."
+  src <- run amqpSpecFile
+  writeFile framingDataFile src
 
 \end{code}
