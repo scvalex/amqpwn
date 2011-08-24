@@ -40,42 +40,30 @@ import Network.AMQP.Internal.Types
 
 -- | Represents an AMQP connection.
 data Connection = Connection
-    { getSocket :: Socket
+    { getSocket :: TMVar Socket
       -- ^ connection socket
-    , getChannels :: (TMVar (IntMap (Channel, ThreadId)))
+    , getChannels :: TVar (IntMap Channel)
       -- ^ open channels (channelID => (Channel, ChannelThread))
     , getMaxFrameSize :: Int
       -- ^ negotiated maximum frame size
     , getConnClosed :: TMVar AMQPException
       -- ^ reason for closure, if closed
-    , getConnClosedLock :: TMVar ()
-      -- ^ used by closeConnection to block until connection-close
-      -- handshake is complete
-    , getConnWriteLock :: TMVar ()
-      -- ^ to ensure atomic writes to the socket
-    , getConnCloseHandlers :: TMVar [AMQPException -> IO ()]
+    , getConnCloseHandlers :: TVar [AMQPException -> IO ()]
       -- ^ handlers to be notified of connection closures
-    , getLastChannelId :: TMVar Int
+    , getLastChannelId :: TVar Int
       -- ^ for auto-incrementing the channelIDs
     }
 
 -- | Represents an AMQP channel.
 data Channel = Channel
-    { getConnection :: Connection
-      -- ^ the underlying connection
-    , getInQueue :: TChan FramePayload
+    { getInQueue :: TChan FramePayload
       -- ^ incoming frames (from Connection)
     , getRPCQueue :: TChan (TMVar Method)
       -- ^ for every request, an TMVar is stored here waiting for the response
-    , getChannelId :: Word16
-      -- ^ channel number
-    , getLastConsumerTag :: TMVar Int
-      -- ^ used to assign new consumer tags
-      -- methods will be sent
     , getChanClosed :: TMVar AMQPException
       -- ^ reason for closing the channel
-    , getConsumers :: TMVar (M.Map String ((Message, Envelope) -> IO ()))
-      -- ^ consumerTag => callback
+    , getConsumer :: TMVar ((Message, Envelope) -> IO ())
+      -- ^ consumer callback
     }
 
 -- | A Method is a higher-level object consisting of several frames.
