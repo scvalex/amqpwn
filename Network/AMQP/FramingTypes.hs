@@ -126,7 +126,7 @@ condPut _ = return ()
 -- | Make a method name by concatenating the AMQP class and method
 -- names.  This is actually used to name data-type constructors.
 mkMethodName :: String -> String -> String
-mkMethodName cNam nam= printf "%s_%s" (fixClassName cNam) (fixMethodName nam)
+mkMethodName cNam nam = printf "%s_%s" (fixClassName cNam) (fixMethodName nam)
 
 -- | Use this to create chains of lambdas and their ilk.
 appAll :: ExpQ -> [ExpQ] -> ExpQ
