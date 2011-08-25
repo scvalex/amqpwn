@@ -17,9 +17,10 @@ module Network.AMQP.Connection (
 
 import Control.Applicative ( (<$>) )
 import Control.Concurrent ( killThread, myThreadId, forkIO )
-import Control.Concurrent.STM ( atomically, newTMVar, newEmptyTMVar
-                              , takeTMVar, putTMVar, tryPutTMVar, readTMVar
-                              , writeTChan, isEmptyTMVar )
+import Control.Concurrent.STM ( atomically
+                              , newTMVar, newEmptyTMVar
+                              , readTMVar, tryPutTMVar, isEmptyTMVar
+                              , newTVar, readTVar, writeTVar )
 import qualified Control.Exception as CE
 import Data.Binary ( Binary(..) )
 import qualified Data.Binary.Put as Put
@@ -30,9 +31,9 @@ import qualified Data.Map as Map
 import Data.String ( IsString(..) )
 import Network.AMQP.Protocol ( readFrameSock, writeFrameSock )
 import Network.AMQP.Helpers ( toStrict, modifyTVar, withTMVarIO )
-import Network.AMQP.Types ( Connection(..), Frame(..), FramePayload(..)
-                          , ShortString(..), MethodPayload(..), ShortString
-                          , Channel(..), FieldTable(..), LongString(..)
+import Network.AMQP.Types ( Connection(..), Channel(..), Assembler(..)
+                          , Frame(..), FramePayload(..), MethodPayload(..)
+                          , FieldTable(..), ShortString(..), LongString(..)
                           , AMQPException(..) )
 import Network.BSD ( getProtocolNumber, getHostByName, hostAddress )
 import Network.Socket ( Socket, socket, Family(..), SocketType(..), connect
@@ -177,10 +178,6 @@ openConnection host port vhost username password = do
           -- clear channel threads
           writeTVar (getChannels conn) IM.empty
 
-          -- mark connection as closed, so all pending calls to
-          -- 'closeConnection' can now return
-          tryPutTMVar (getConnClosedLock conn) ()
-
           readTVar (getConnCloseHandlers conn)
 
         -- notify connection-close-handlers
@@ -206,13 +203,13 @@ closeConnection replyCode replyText conn = do
   return ()
     where
       doClose = do
-        withTMVarIO (getSocket conn) $
-                    writeFrameSock sock $ Frame 0 $
-                                   MethodPayload $ Connection_close
-                                                     (fromIntegral replyCode)
-                                                     (fromString replyText)
-                                                     0 -- class_id
-                                                     0 -- method_id
+        withTMVarIO (getSocket conn) $ \sock ->
+            writeFrameSock sock $ Frame 0 $
+                           MethodPayload $ Connection_close
+                                             (fromIntegral replyCode)
+                                             (fromString replyText)
+                                             0 -- class_id
+                                             0 -- method_id
 
 -- | Add a handler that will be called after the connection is closed
 -- either by calling 'closeConnection' or by an exception.  If the
@@ -225,12 +222,12 @@ addConnectionClosedHandler conn handler = do
   closeReason <- atomically $ do
                     notConnClosed <- isEmptyTMVar (getConnClosed conn)
                     if notConnClosed
-                    then do
-                      modifyTVar (getConnCloseHandlers conn) $ \hs ->
-                          handler : handlers
-                      return Nothing
-                    else do
-                      readTMVar (getConnClosed conn)
+                      then do
+                        modifyTVar (getConnCloseHandlers conn) $ \handlers ->
+                            handler : handlers
+                        return Nothing
+                      else do
+                        Just <$> readTMVar (getConnClosed conn)
   case closeReason of
     Nothing -> return ()
     Just r  -> handler r
@@ -268,4 +265,18 @@ connectionReceiver conn sock = do
               act
 
           processChannelPayload ch payload = do
-              return ()
+              mMethod <- atomically $ do
+                                 (Assembler assembler) <- readTVar (getAssembler ch)
+                                 case assembler payload of
+                                   Left assembler' -> do
+                                       writeTVar (getAssembler ch) assembler'
+                                       return Nothing
+                                   Right (method, assembler') -> do
+                                       writeTVar (getAssembler ch) assembler'
+                                       return (Just method)
+              case mMethod of
+                Nothing     -> return ()
+                Just method -> handleInboundMethod method
+
+          handleInboundMethod method = do
+            putStrLn $ printf "Handling %s\n" (show method)

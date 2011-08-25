@@ -2,25 +2,28 @@
 
 module Network.AMQP.Protocol (
         methodHasContent, peekFrameSize, readFrameSock, writeFrameSock,
-        collectContent, msgFromContentHeaderProperties, writeFrames,
-        throwMostRelevantAMQPException
+        collectContent, msgFromContentHeaderProperties, writeFrames
     ) where
 
-import Control.Concurrent.STM ( atomically, TChan, readTChan, readTMVar
-                              , isEmptyTMVar )
+import Control.Concurrent.STM ( atomically
+                              , TChan, readTChan
+                              , readTVar
+                              , readTMVar, isEmptyTMVar )
 import qualified Control.Exception as CE
+import Control.Monad ( when )
 import Data.Binary
 import Data.Binary.Get
-import qualified Data.IntMap as IntMap
+import qualified Data.IntMap as IM
 import Data.Binary.Put
 import qualified Data.ByteString.Char8 as BS
 import qualified Data.ByteString.Lazy.Char8 as BL
-import Network.AMQP.Helpers ( toLazy, toStrict )
+import Network.AMQP.Helpers ( toLazy, toStrict, withTMVarIO )
 import Network.AMQP.Framing
 import Network.AMQP.Internal.Types
 import Network.AMQP.Types
 import Network.Socket ( Socket )
 import qualified Network.Socket.ByteString as NB
+import Text.Printf ( printf )
 
 
 -- | True if a content (content-header and possibly content-body)
@@ -74,22 +77,30 @@ writeFrameSock sock x = do
   NB.send sock $ toStrict $ runPut $ put x
   return ()
 
--- | writes multiple frames to the channel atomically
-writeFrames :: Channel -> [FramePayload] -> IO ()
-writeFrames chan payloads =
-    let conn = getConnection chan
-    in do
-      chans <- atomically $ readTMVar (getChannels conn)
-      if IntMap.member (fromIntegral $ getChannelId chan) chans
-        then CE.catch
-             -- ensure at most one thread is writing to the socket
-             -- at any time
-                 (atomically (readTMVar $ getConnWriteLock conn) >>= \_ ->
-                      mapM_ (\payload -> writeFrameSock (getSocket conn) (Frame (getChannelId chan) payload)) payloads)
-                 ( \(_ :: CE.IOException) -> do
-                     CE.throwIO $ userError "connection not open")
-        else do
-          CE.throwIO $ userError "channel not open"
+-- FIXME: There's a race here. Someone can close the channel between
+-- the @atomically@ and the @withTMVarIO@.
+writeFrames :: Connection -> ChannelId -> [FramePayload] -> IO ()
+writeFrames conn chId payloads = do
+  atomically ensureChannel
+  withTMVarIO (getSocket conn) $ \sock -> do
+      mapM_ (\payload -> writeFrameSock sock (Frame (fromIntegral chId) payload))
+            payloads
+      `CE.catch`
+      (\(e :: CE.IOException) -> CE.throw . ClientException $
+                                  printf "IOException: %s" (show e))
+    where
+      ensureChannel = do
+        chs <- readTVar (getChannels conn)
+        case IM.lookup chId chs of
+          Nothing -> CE.throw . ClientException $ printf "Tried to send to \
+                                                        \non-existing channel %d"
+                                                        chId
+          Just ch -> do
+            notClosed <- isEmptyTMVar (getChanClosed ch)
+            when (not notClosed) $ do
+                reason <- readTMVar (getChanClosed ch)
+                CE.throw . ClientException $
+                  printf "Channel %d already closed: '%s'" chId (show reason)
 
 -- | reads a contentheader and contentbodies and assembles them
 collectContent :: TChan FramePayload -> IO (ContentHeaderProperties, BL.ByteString)
@@ -116,19 +127,3 @@ msgFromContentHeaderProperties (CHBasic content_type _ _ delivery_mode _ correla
         where
           fromShortString (Just (ShortString s)) = Just s
           fromShortString _ = Nothing
-
--- Throws an AMQPException based on the status of the connection and
--- of the channel.  If both connection and channel are closed, throw
--- the connection's exception.  Otherwise throw the channel's
--- exception.  If neither are closed, throw a ClientExeption.
-throwMostRelevantAMQPException :: Channel -> IO b
-throwMostRelevantAMQPException chan = atomically $ do
-  notConnClosed <- isEmptyTMVar (getConnClosed $ getConnection chan)
-  if notConnClosed
-     then do
-       dontHaveReason <- isEmptyTMVar $ getChanClosed chan
-       if dontHaveReason
-         then CE.throw $ ClientException "Unknown Reason"
-         else CE.throw =<< readTMVar (getChanClosed chan)
-     else do
-       CE.throw =<< readTMVar (getConnClosed $ getConnection chan)

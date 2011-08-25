@@ -5,7 +5,7 @@ module Network.AMQP.Types (
         module Network.AMQP.Framing,
 
         -- * AMQP high-level types
-        Connection(..), Channel(..),
+        Connection(..), Channel(..), Assembler(..), ChannelId,
 
         -- * Message/Envelope
         Method(..), Message(..), newMsg, Envelope(..),
@@ -19,8 +19,7 @@ module Network.AMQP.Types (
     ) where
 
 import Control.Applicative ( Applicative(..), (<$>) )
-import Control.Concurrent ( ThreadId )
-import Control.Concurrent.STM ( TMVar, TChan )
+import Control.Concurrent.STM ( TChan, TVar, TMVar )
 import Control.Exception ( Exception )
 import Data.Binary ( Binary(..) )
 import Data.Binary.Get ( Get, getWord8, getLazyByteString )
@@ -28,9 +27,7 @@ import Data.Binary.Put ( Put, runPut, putWord8, putLazyByteString )
 import Data.ByteString.Lazy.Char8 ( ByteString, empty )
 import qualified Data.ByteString.Lazy.Char8 as BL
 import Data.IntMap ( IntMap )
-import qualified Data.Map as M
 import Data.Typeable ( Typeable )
-import Data.Word ( Word16 )
 import Network.Socket ( Socket )
 import Network.AMQP.Framing
 import Network.AMQP.Internal.Types
@@ -42,22 +39,22 @@ import Network.AMQP.Internal.Types
 data Connection = Connection
     { getSocket :: TMVar Socket
       -- ^ connection socket
-    , getChannels :: TVar (IntMap Channel)
-      -- ^ open channels (channelID => (Channel, ChannelThread))
     , getMaxFrameSize :: Int
       -- ^ negotiated maximum frame size
     , getConnClosed :: TMVar AMQPException
       -- ^ reason for closure, if closed
     , getConnCloseHandlers :: TVar [AMQPException -> IO ()]
       -- ^ handlers to be notified of connection closures
-    , getLastChannelId :: TVar Int
-      -- ^ for auto-incrementing the channelIDs
+    , getChannels :: TVar (IntMap Channel)
+      -- ^ open channels (ChannelId => (Channel, ChannelThread))
+    , getLastChannelId :: TVar ChannelId
+      -- ^ for auto-incrementing the ChannelIds
     }
 
 -- | Represents an AMQP channel.
 data Channel = Channel
-    { getInQueue :: TChan FramePayload
-      -- ^ incoming frames (from Connection)
+    { getAssembler :: TVar Assembler
+      -- ^ method assembler
     , getRPCQueue :: TChan (TMVar Method)
       -- ^ for every request, an TMVar is stored here waiting for the response
     , getChanClosed :: TMVar AMQPException
@@ -65,6 +62,17 @@ data Channel = Channel
     , getConsumer :: TMVar ((Message, Envelope) -> IO ())
       -- ^ consumer callback
     }
+
+-- | Represents a "method assembler".  It's effectively a function
+-- that takes a frame payload and either outputs another 'Assembler'
+-- to run the next frame on, or outputs a complete 'Method' and a new
+-- 'Assembler'.  We use closures to model the assembler's state.
+newtype Assembler = Assembler (FramePayload -> Either Assembler (Method, Assembler))
+
+-- | We represent channel identifiers as Ints.  Note that there's also
+-- 'ChannelID', which is actually a Word16 and is only used
+-- internally.
+type ChannelId = Int
 
 -- | A Method is a higher-level object consisting of several frames.
 data Method = SimpleMethod MethodPayload

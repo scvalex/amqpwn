@@ -6,7 +6,10 @@ module Network.AMQP.Helpers (
         modifyTVar, withTMVarIO
     ) where
 
-import qualified Control.Concurrent.STM as STM
+import Control.Applicative ( (<*) )
+import Control.Concurrent.STM ( STM, atomically
+                              , TVar, writeTVar, readTVar
+                              , TMVar, takeTMVar, putTMVar )
 import qualified Data.ByteString.Char8 as BS
 import qualified Data.ByteString.Lazy.Char8 as BL
 
@@ -19,14 +22,12 @@ toLazy :: BS.ByteString -> BL.ByteString
 toLazy x = BL.fromChunks [x]
 
 -- | Modify a TVar in-place.
-modifyTVar :: STM.TVar a -> (a -> a) -> STM.STM ()
-modifyTVar var f = STM.atomically $ STM.writeTVar var . f =<< STM.readTVar var
+modifyTVar :: TVar a -> (a -> a) -> STM ()
+modifyTVar var f = writeTVar var . f =<< readTVar var
 
 -- | Take a TMVar, run an action with it and put it back.  The action
 -- has exclusive access to the value while it is executing.
-withTMVarIO :: STM.TMVar a -> (a -> IO b) -> IO b
+withTMVarIO :: TMVar a -> (a -> IO b) -> IO b
 withTMVarIO var act = do
-  val <- STM.atomically $ takeTMVar var
-  res <- act val
-  STM.atomically $ putTMVar var val
-  return res
+  val <- atomically $ takeTMVar var
+  act val <* atomically (putTMVar var val)
