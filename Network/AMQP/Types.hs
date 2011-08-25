@@ -52,6 +52,8 @@ data Connection = Connection
       -- ^ open channels ('ChannelId' => 'Channel')
     , getLastChannelId :: TVar ChannelId
       -- ^ for auto-incrementing the 'ChannelId's
+    , getControlChannel :: TVar ChannelId
+      -- ^ channel used for /control/ commands
     , getRPCQueue :: TChan (TMVar Method)
       -- ^ for every blocking request, a 'TMVar' is stored here waiting
       -- for the response

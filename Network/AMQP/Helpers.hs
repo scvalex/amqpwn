@@ -6,10 +6,10 @@ module Network.AMQP.Helpers (
         modifyTVar, withTMVarIO
     ) where
 
-import Control.Applicative ( (<*) )
 import Control.Concurrent.STM ( STM, atomically
                               , TVar, writeTVar, readTVar
                               , TMVar, takeTMVar, putTMVar )
+import qualified Control.Exception as CE
 import qualified Data.ByteString.Char8 as BS
 import qualified Data.ByteString.Lazy.Char8 as BL
 
@@ -30,4 +30,4 @@ modifyTVar var f = writeTVar var . f =<< readTVar var
 withTMVarIO :: TMVar a -> (a -> IO b) -> IO b
 withTMVarIO var act = do
   val <- atomically $ takeTMVar var
-  act val <* atomically (putTMVar var val)
+  act val `CE.finally` atomically (putTMVar var val)

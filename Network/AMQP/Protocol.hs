@@ -76,17 +76,15 @@ writeFrameSock sock x = do
   NB.send sock $ toStrict $ runPut $ put x
   return ()
 
--- FIXME: There's a race here. Someone can close the channel between
--- the @atomically@ and the @withTMVarIO@.
 writeFrames :: Connection -> ChannelId -> [FramePayload] -> IO ()
 writeFrames conn chId payloads = do
-  atomically ensureChannel
   withTMVarIO (getSocket conn) $ \sock -> do
+      atomically ensureChannel
       mapM_ (\payload -> writeFrameSock sock (Frame (fromIntegral chId) payload))
             payloads
       `CE.catch`
       (\(e :: CE.IOException) -> CE.throw . ClientException $
-                                  printf "IOException: %s" (show e))
+                                  printf "IOException on %d: %s" chId (show e))
     where
       ensureChannel = do
         chs <- readTVar (getChannels conn)

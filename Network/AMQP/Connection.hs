@@ -18,29 +18,30 @@ module Network.AMQP.Connection (
         closeConnection, closeConnectionNormal,
 
         -- * Queue operations
-        declareQueue, deleteQueue
+        declareQueue, declareQueueAnon, deleteQueue
     ) where
 
 import Control.Applicative ( (<$>) )
 import Control.Concurrent ( killThread, myThreadId, forkIO )
 import Control.Concurrent.STM ( atomically
                               , newTMVar, newEmptyTMVar
-                              , readTMVar, tryPutTMVar, isEmptyTMVar
+                              , readTMVar, tryPutTMVar, isEmptyTMVar, takeTMVar
                               , newTVar, readTVar, writeTVar
-                              , newTChan )
+                              , newTChan, writeTChan )
 import qualified Control.Exception as CE
 import Data.Binary ( Binary(..) )
 import qualified Data.Binary.Put as Put
 import Data.ByteString.Char8 ( pack )
 import Data.ByteString.Lazy.Char8 ( unpack )
 import qualified Data.IntMap as IM
-import qualified Data.Map as Map
+import qualified Data.Map as M
 import Data.String ( IsString(..) )
-import Network.AMQP.Protocol ( readFrameSock, writeFrameSock )
+import Network.AMQP.Protocol ( readFrameSock, writeFrameSock, writeFrames )
 import Network.AMQP.Helpers ( toStrict, modifyTVar, withTMVarIO )
-import Network.AMQP.Types ( Connection(..), Channel(..), Assembler(..)
+import Network.AMQP.Types ( Connection(..), Channel(..), Assembler(..), ChannelId
                           , QueueName
-                          , Frame(..), FramePayload(..), MethodPayload(..)
+                          , Frame(..), FramePayload(..)
+                          , Method(..), MethodPayload(..)
                           , FieldTable(..), ShortString(..), LongString(..)
                           , AMQPException(..) )
 import Network.BSD ( getProtocolNumber, getHostByName, hostAddress )
@@ -108,13 +109,13 @@ openConnection host port vhost username password = do
       doConnectionOpen CStarting2 sock frameMax = do
         -- C: start_ok
         let loginTable = LongString . drop 4 . unpack . Put.runPut . put $
-               FieldTable (Map.fromList [ ( fromString "LOGIN"
-                                          , fromString username)
-                                        , ( fromString "PASSWORD"
-                                          , fromString password)
-                                        ])
+               FieldTable (M.fromList [ ( fromString "LOGIN"
+                                        , fromString username)
+                                      , ( fromString "PASSWORD"
+                                        , fromString password)
+                                      ])
         writeFrameSock sock . Frame 0 . MethodPayload $ Connection_start_ok
-                           (FieldTable (Map.fromList []))
+                           (FieldTable (M.fromList []))
                            (ShortString "AMQPLAIN")
                            loginTable
                            (ShortString "en_US")
@@ -294,14 +295,63 @@ connectionReceiver conn sock = do
 -- | Declare a queue with the specified name.  Throw an exception on
 -- failure.  Applications of this function are idempotent
 -- (i.e. calling it multiple times is equivalent to calling it once).
--- Returns the number of messages already on the queue, if it exists,
+-- Return the number of messages already on the queue, if it exists,
 -- or 0, otherwise.
 declareQueue :: Connection -> QueueName -> IO Int
 declareQueue conn qn = do
-  undefined
+  resp <- request conn . SimpleMethod $
+         Queue_declare 0               -- ticket
+                       (fromString qn) -- name
+                       False           -- passive
+                       True            -- durable
+                       False           -- exclusive
+                       False           -- auto-delete
+                       False           -- no-wait
+                       (FieldTable (M.fromList []))
+  let (SimpleMethod (Queue_declare_ok _ count _)) = resp
+  return (fromIntegral count)
+
+-- | Declare an anonymous queue.  Throw an exception on failure.
+-- Return the name of the newly created queue.
+declareQueueAnon :: Connection -> IO QueueName
+declareQueueAnon conn = do
+  resp <- request conn . SimpleMethod $
+         Queue_declare 0               -- ticket
+                       (fromString "") -- name
+                       False           -- passive
+                       True            -- durable
+                       False           -- exclusive
+                       False           -- auto-delete
+                       False           -- no-wait
+                       (FieldTable (M.fromList []))
+  let (SimpleMethod (Queue_declare_ok (ShortString name) _ _)) = resp
+  return name
 
 -- | Delete the queue with the specified name.  Throw an exception if
--- the queue does not exist.
-deleteQueue :: Connection -> QueueName -> IO ()
+-- the queue does not exist.  Return the number of messages on the
+-- queue when it was deleted.
+deleteQueue :: Connection -> QueueName -> IO Int
 deleteQueue conn qn = do
-  undefined
+  resp <- request conn . SimpleMethod $
+         Queue_delete 0               -- ticket
+                      (fromString qn) -- name
+                      False           -- if-unused
+                      False           -- if-empty
+                      False           -- nowait
+  let (SimpleMethod (Queue_delete_ok count)) = resp
+  return (fromIntegral count)
+
+-- FIXME: there's a race between writing res to the rpc queue and
+-- writing the command on the wire.
+request :: Connection -> Method -> IO Method
+request conn method = do
+  res <- atomically $ newEmptyTMVar
+  atomically $ writeTChan (getRPCQueue conn) res
+  controlCh <- atomically $ readTVar (getControlChannel conn)
+  unsafeWriteMethod conn controlCh method
+  atomically $ takeTMVar res
+
+-- | Write a method to the connection.  Does /not/ handle exceptions.
+unsafeWriteMethod :: Connection -> ChannelId -> Method -> IO ()
+unsafeWriteMethod conn chId (SimpleMethod m) = do
+    writeFrames conn chId [MethodPayload m]
