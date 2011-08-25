@@ -6,8 +6,7 @@ import Control.Exception ( handle, bracket, IOException )
 import Control.Monad ( replicateM, mapM_ )
 import Data.String ( fromString )
 import Network.AMQP ( Connection, openConnection, closeConnectionNormal
-                    , addConnectionClosedHandler
-                    , MethodPayload(..) )
+                    , addConnectionClosedHandler )
 import Network.AMQP.Types ( AMQPException(..) )
 import System.Exit ( exitFailure )
 import System.Posix.Unistd ( sleep )
