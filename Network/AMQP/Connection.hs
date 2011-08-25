@@ -36,15 +36,14 @@ import qualified Data.ByteString.Lazy.Char8 as BL
 import qualified Data.IntMap as IM
 import qualified Data.Map as M
 import Data.String ( IsString(..) )
-import Data.Word ( Word64 )
 import Network.AMQP.Protocol ( readFrameSock, writeFrameSock, writeFrames
-                             , methodHasContent )
+                             , newEmptyAssembler )
 import Network.AMQP.Helpers ( toStrict, modifyTVar, withTMVarIO )
 import Network.AMQP.Types ( Connection(..), Channel(..), Assembler(..)
                           , ChannelId, controlChannel
                           , QueueName
                           , Frame(..), FramePayload(..)
-                          , Method(..), MethodPayload(..), ContentHeaderProperties
+                          , Method(..), MethodPayload(..)
                           , FieldTable(..), ShortString(..), LongString(..)
                           , AMQPException(..) )
 import Network.BSD ( getProtocolNumber, getHostByName, hostAddress )
@@ -391,29 +390,3 @@ newChannel = atomically $ do
   return Channel { getAssembler  = assembler
                  , getChanClosed = chanClosed
                  , getConsumer   = consumer }
-
--- | Create a new empty 'Assembler'.
-newEmptyAssembler :: Assembler
-newEmptyAssembler =
-    Assembler $ \m@(MethodPayload p) ->
-        if methodHasContent m
-          then Left (newContentCollector p)
-          else Right (SimpleMethod p, newEmptyAssembler)
-    where
-      newContentCollector :: MethodPayload -> Assembler
-      newContentCollector p =
-          Assembler $ \(ContentHeaderPayload _ _ bodySize props) ->
-              if bodySize > 0
-              then Left (bodyContentCollector p props bodySize [])
-              else Right (ContentMethod p props BL.empty, newEmptyAssembler)
-
-      bodyContentCollector :: MethodPayload -> ContentHeaderProperties -> Word64
-                           -> [BL.ByteString] -> Assembler
-      bodyContentCollector p props remData acc =
-          Assembler $ \(ContentBodyPayload payload) ->
-              let remData' = remData - fromIntegral (BL.length payload)
-              in if remData' > 0
-                 then Left (bodyContentCollector p props remData' (payload:acc))
-                 else Right ( ContentMethod p props
-                                            (BL.concat $ reverse (payload:acc))
-                            , newEmptyAssembler )

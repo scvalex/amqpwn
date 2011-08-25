@@ -2,11 +2,10 @@
 
 module Network.AMQP.Protocol (
         methodHasContent, peekFrameSize, readFrameSock, writeFrameSock,
-        collectContent, msgFromContentHeaderProperties, writeFrames
+        msgFromContentHeaderProperties, writeFrames, newEmptyAssembler
     ) where
 
 import Control.Concurrent.STM ( atomically
-                              , TChan, readTChan
                               , readTVar
                               , readTMVar, isEmptyTMVar )
 import qualified Control.Exception as CE
@@ -99,20 +98,6 @@ writeFrames conn chId payloads = do
                 CE.throw . ClientException $
                   printf "Channel %d already closed: '%s'" chId (show reason)
 
--- | reads a contentheader and contentbodies and assembles them
-collectContent :: TChan FramePayload -> IO (ContentHeaderProperties, BL.ByteString)
-collectContent chan = do
-  (ContentHeaderPayload _ _ bodySize props) <- atomically $ readTChan chan
-
-  content <- collect $ fromIntegral bodySize
-  return (props, BL.concat content)
-      where
-        collect x | x <= 0 = return []
-        collect remData = do
-          (ContentBodyPayload payload) <- atomically $ readTChan chan
-          r <- collect (remData - (BL.length payload))
-          return $ payload : r
-
 msgFromContentHeaderProperties :: ContentHeaderProperties -> BL.ByteString
                                -> Message
 msgFromContentHeaderProperties (CHBasic content_type _ _ delivery_mode _ correlation_id reply_to _ message_id timestamp _ _ _ _) myMsgBody =
@@ -124,3 +109,29 @@ msgFromContentHeaderProperties (CHBasic content_type _ _ delivery_mode _ correla
         where
           fromShortString (Just (ShortString s)) = Just s
           fromShortString _ = Nothing
+
+-- | Create a new empty 'Assembler'.
+newEmptyAssembler :: Assembler
+newEmptyAssembler =
+    Assembler $ \m@(MethodPayload p) ->
+        if methodHasContent m
+          then Left (newContentCollector p)
+          else Right (SimpleMethod p, newEmptyAssembler)
+    where
+      newContentCollector :: MethodPayload -> Assembler
+      newContentCollector p =
+          Assembler $ \(ContentHeaderPayload _ _ bodySize props) ->
+              if bodySize > 0
+              then Left (bodyContentCollector p props bodySize [])
+              else Right (ContentMethod p props BL.empty, newEmptyAssembler)
+
+      bodyContentCollector :: MethodPayload -> ContentHeaderProperties -> Word64
+                           -> [BL.ByteString] -> Assembler
+      bodyContentCollector p props remData acc =
+          Assembler $ \(ContentBodyPayload payload) ->
+              let remData' = remData - fromIntegral (BL.length payload)
+              in if remData' > 0
+                 then Left (bodyContentCollector p props remData' (payload:acc))
+                 else Right ( ContentMethod p props
+                                            (BL.concat $ reverse (payload:acc))
+                            , newEmptyAssembler )
