@@ -1,5 +1,3 @@
--- -*- haskell-mode -*-
-
 {-# LANGUAGE TemplateHaskell #-}
 
 module Network.AMQP.Framing (
@@ -9,7 +7,7 @@ module Network.AMQP.Framing (
 
 import Network.AMQP.FramingData
 import Network.AMQP.FramingTypes
-import Network.AMQP.Internal.Types
+import Network.AMQP.Types.Internal
 
 import Data.Binary ( Binary(..), Get, Put )
 

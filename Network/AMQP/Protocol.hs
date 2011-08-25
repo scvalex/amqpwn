@@ -19,7 +19,6 @@ import qualified Data.ByteString.Char8 as BS
 import qualified Data.ByteString.Lazy.Char8 as BL
 import Network.AMQP.Helpers ( toLazy, toStrict, withTMVarIO )
 import Network.AMQP.Framing
-import Network.AMQP.Internal.Types
 import Network.AMQP.Types
 import Network.Socket ( Socket )
 import qualified Network.Socket.ByteString as NB

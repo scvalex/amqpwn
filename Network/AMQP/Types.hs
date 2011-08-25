@@ -1,7 +1,7 @@
 {-# LANGUAGE DeriveDataTypeable #-}
 
 module Network.AMQP.Types (
-        module Network.AMQP.Internal.Types,
+        module Network.AMQP.Types.Internal,
         module Network.AMQP.Framing,
 
         -- * AMQP high-level types
@@ -30,7 +30,7 @@ import Data.IntMap ( IntMap )
 import Data.Typeable ( Typeable )
 import Network.Socket ( Socket )
 import Network.AMQP.Framing
-import Network.AMQP.Internal.Types
+import Network.AMQP.Types.Internal
 
 
 -- High-level types

@@ -1,4 +1,4 @@
-module Network.AMQP.Internal.Types (
+module Network.AMQP.Types.Internal (
         -- * AMQP low-level types
         Octet, Bit, ShortInt, LongInt, LongLongInt,
         ShortString(..), LongString(..),
