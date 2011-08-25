@@ -24,10 +24,10 @@ module Network.AMQP.Connection (
 import Control.Applicative ( (<$>) )
 import Control.Concurrent ( killThread, myThreadId, forkIO )
 import Control.Concurrent.STM ( atomically
-                              , newTMVar, newEmptyTMVar
-                              , readTMVar, tryPutTMVar, isEmptyTMVar, takeTMVar
+                              , newTMVar, newEmptyTMVar, isEmptyTMVar
+                              , readTMVar, tryPutTMVar, putTMVar, takeTMVar
                               , newTVar, readTVar, writeTVar
-                              , newTChan, writeTChan )
+                              , newTChan, isEmptyTChan, readTChan, writeTChan )
 import qualified Control.Exception as CE
 import Data.Binary ( Binary(..) )
 import qualified Data.Binary.Put as Put
@@ -291,8 +291,15 @@ connectionReceiver conn sock = do
                 Nothing     -> return ()
                 Just method -> handleInboundMethod method
 
-          handleInboundMethod method = do
-            putStrLn $ printf "Handling inbound %s\n" (show method)
+          handleInboundMethod method = atomically $ do
+              noRPC <- isEmptyTChan (getRPCQueue conn)
+              resp <- readTChan (getRPCQueue conn)
+              putTMVar resp $ if not noRPC
+                              then method
+                              else CE.throw . ClientException $
+                                   printf "got reponse but no pending RPC: %s"
+                                          (show method)
+              -- I feel dirty now.
 
 -- | Perform a synchroneous AMQP requst.
 request :: Connection -> Method -> IO Method
