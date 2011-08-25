@@ -1,18 +1,24 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 
--- | General concept: each connection has its own thread; each channel
--- has its own thread.  The connection reads data from the socket and
--- forwards it to the channel.  The channel processes data and
--- forwards it to the application.  Outgoing data is written directly
--- onto the socket.
+-- | A connection is a thread that data from the socket, assembles
+-- complete 'Method's and processes them, either by updating its
+-- internal state or by forwarding it to the user application.
 --
--- Incoming Data: Socket -> Connection-Thread -> Channel-Thread -> Application
--- Outgoing Data: Application -> Socket
+-- Incoming Data: Socket -> Connection Thread -> Application
+--
+-- Commands issued by the application are stored in a queue and
+-- executed sequentially.  So, as a rule, all functions that work on
+-- 'Connection's are thread-safe.
+--
+-- Outgoing Data: Application -> Command Queue -> Socket
 
 module Network.AMQP.Connection (
         -- * Opening and closing connections
         openConnection, addConnectionClosedHandler,
-        closeConnection, closeConnectionNormal
+        closeConnection, closeConnectionNormal,
+
+        -- * Queue operations
+        declareQueue, deleteQueue
     ) where
 
 import Control.Applicative ( (<$>) )
@@ -20,7 +26,8 @@ import Control.Concurrent ( killThread, myThreadId, forkIO )
 import Control.Concurrent.STM ( atomically
                               , newTMVar, newEmptyTMVar
                               , readTMVar, tryPutTMVar, isEmptyTMVar
-                              , newTVar, readTVar, writeTVar )
+                              , newTVar, readTVar, writeTVar
+                              , newTChan )
 import qualified Control.Exception as CE
 import Data.Binary ( Binary(..) )
 import qualified Data.Binary.Put as Put
@@ -32,6 +39,7 @@ import Data.String ( IsString(..) )
 import Network.AMQP.Protocol ( readFrameSock, writeFrameSock )
 import Network.AMQP.Helpers ( toStrict, modifyTVar, withTMVarIO )
 import Network.AMQP.Types ( Connection(..), Channel(..), Assembler(..)
+                          , QueueName
                           , Frame(..), FramePayload(..), MethodPayload(..)
                           , FieldTable(..), ShortString(..), LongString(..)
                           , AMQPException(..) )
@@ -154,16 +162,18 @@ openConnection host port vhost username password = do
       doConnectionOpen COpen sock frameMax = atomically $ do
         -- Connection established!
         sockVar <- newTMVar sock
-        myConnChannels <- newTVar IM.empty
         cClosed <- newEmptyTMVar
         myConnClosedHandlers <- newTVar []
+        myConnChannels <- newTVar IM.empty
         lastChanId <- newTVar 0
-        return $ Connection { getSocket = sockVar
-                            , getChannels = myConnChannels
-                            , getMaxFrameSize = frameMax
-                            , getConnClosed = cClosed
+        rpcQueue <- newTChan
+        return $ Connection { getSocket            = sockVar
+                            , getMaxFrameSize      = frameMax
+                            , getConnClosed        = cClosed
                             , getConnCloseHandlers = myConnClosedHandlers
-                            , getLastChannelId = lastChanId
+                            , getChannels          = myConnChannels
+                            , getLastChannelId     = lastChanId
+                            , getRPCQueue          = rpcQueue
                             }
       finalizeConnection conn reason = do
         -- try closing socket
@@ -279,4 +289,19 @@ connectionReceiver conn sock = do
                 Just method -> handleInboundMethod method
 
           handleInboundMethod method = do
-            putStrLn $ printf "Handling %s\n" (show method)
+            putStrLn $ printf "Handling inbound %s\n" (show method)
+
+-- | Declare a queue with the specified name.  Throw an exception on
+-- failure.  Applications of this function are idempotent
+-- (i.e. calling it multiple times is equivalent to calling it once).
+-- Returns the number of messages already on the queue, if it exists,
+-- or 0, otherwise.
+declareQueue :: Connection -> QueueName -> IO Int
+declareQueue conn qn = do
+  undefined
+
+-- | Delete the queue with the specified name.  Throw an exception if
+-- the queue does not exist.
+deleteQueue :: Connection -> QueueName -> IO ()
+deleteQueue conn qn = do
+  undefined

@@ -7,6 +7,9 @@ module Network.AMQP.Types (
         -- * AMQP high-level types
         Connection(..), Channel(..), Assembler(..), ChannelId,
 
+        -- * Convenience types
+        QueueName,
+
         -- * Message/Envelope
         Method(..), Message(..), newMsg, Envelope(..),
         DeliveryMode(..), deliveryModeToInt, intToDeliveryMode,
@@ -46,17 +49,18 @@ data Connection = Connection
     , getConnCloseHandlers :: TVar [AMQPException -> IO ()]
       -- ^ handlers to be notified of connection closures
     , getChannels :: TVar (IntMap Channel)
-      -- ^ open channels (ChannelId => (Channel, ChannelThread))
+      -- ^ open channels ('ChannelId' => 'Channel')
     , getLastChannelId :: TVar ChannelId
-      -- ^ for auto-incrementing the ChannelIds
+      -- ^ for auto-incrementing the 'ChannelId's
+    , getRPCQueue :: TChan (TMVar Method)
+      -- ^ for every blocking request, a 'TMVar' is stored here waiting
+      -- for the response
     }
 
 -- | Represents an AMQP channel.
 data Channel = Channel
     { getAssembler :: TVar Assembler
       -- ^ method assembler
-    , getRPCQueue :: TChan (TMVar Method)
-      -- ^ for every request, an TMVar is stored here waiting for the response
     , getChanClosed :: TMVar AMQPException
       -- ^ reason for closing the channel
     , getConsumer :: TMVar ((Message, Envelope) -> IO ())
@@ -69,18 +73,23 @@ data Channel = Channel
 -- 'Assembler'.  We use closures to model the assembler's state.
 newtype Assembler = Assembler (FramePayload -> Either Assembler (Method, Assembler))
 
--- | We represent channel identifiers as Ints.  Note that there's also
+-- | We represent channel identifiers as 'Int's.  Note that there's also
 -- 'ChannelID', which is actually a Word16 and is only used
 -- internally.
 type ChannelId = Int
+
+-- Convenience types
+
+-- | We represent queue names as 'String's.
+type QueueName = String
+
+-- Message/Envelope
 
 -- | A Method is a higher-level object consisting of several frames.
 data Method = SimpleMethod MethodPayload
             | ContentMethod MethodPayload ContentHeaderProperties ByteString
               -- ^ method, properties, content-data
               deriving ( Show )
-
--- Message/Envelope
 
 -- | An AMQP message
 data Message = Message {
