@@ -36,7 +36,9 @@ run specFn = do
   let classes = map readClass $ findChildren (unqual "class") e :: [Class]
 
   return $ L.intercalate "\n"
-         [ "module Network.AMQP.FramingData where"
+         [ "-- WARNING: Auto-generated file. Do not edit."
+         , ""
+         , "module Network.AMQP.FramingData where"
          , ""
          , "import Network.AMQP.FramingTypes"
          , "import Data.Map ( fromList )"
