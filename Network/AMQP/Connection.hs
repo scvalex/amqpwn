@@ -191,10 +191,22 @@ openConnection host port vhost username password = do
           -- clear channel threads
           writeTVar (getChannels conn) IM.empty
 
+          -- kill any pending RPCs
+          killRPCQueue reason (getRPCQueue conn)
+
           readTVar (getConnCloseHandlers conn)
 
         -- notify connection-close-handlers
         mapM_ ($ reason) handlers
+
+      killRPCQueue reason queue = do
+        emp <- isEmptyTChan queue
+        if emp
+          then return ()
+          else do
+            x <- readTChan queue
+            tryPutTMVar x $ CE.throw reason
+            killRPCQueue reason queue
 
 -- | Close a connection normally.
 closeConnectionNormal :: Connection -> IO ()
@@ -249,8 +261,9 @@ addConnectionClosedHandler conn handler = do
 -- opened channels.
 connectionReceiver :: Connection -> Socket -> IO ()
 connectionReceiver conn sock = do
-    (Frame chanId payload) <- readFrameSock sock (getMaxFrameSize conn)
-    forwardToChannel chanId payload
+    (Frame chId payload) <- readFrameSock sock (getMaxFrameSize conn)
+    printf "read frame for channel %d: %s\n" chId (show payload)
+    forwardToChannel chId payload
     connectionReceiver conn sock
         where
           -- Forward to channel0
@@ -291,7 +304,9 @@ connectionReceiver conn sock = do
                 Nothing     -> return ()
                 Just method -> handleInboundMethod method
 
-          handleInboundMethod method = atomically $ do
+          handleInboundMethod method = do
+            printf "handling inbound %s\n" (show method)
+            atomically $ do
               noRPC <- isEmptyTChan (getRPCQueue conn)
               resp <- readTChan (getRPCQueue conn)
               putTMVar resp $ if not noRPC
@@ -313,6 +328,7 @@ request' conn chId method = do
   res <- atomically $ newEmptyTMVar
   atomically $ writeTChan (getRPCQueue conn) res
   unsafeWriteMethod conn chId method
+  printf "sent %s\n" (show method)
   atomically $ takeTMVar res
 
 -- | Write a method to the connection.  Does /not/ handle exceptions.

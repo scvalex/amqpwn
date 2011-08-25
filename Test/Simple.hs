@@ -6,7 +6,8 @@ import Control.Exception ( handle, bracket, IOException )
 import Control.Monad ( replicateM, mapM_ )
 import Data.String ( fromString )
 import Network.AMQP ( Connection, openConnection, closeConnectionNormal
-                    , addConnectionClosedHandler )
+                    , addConnectionClosedHandler
+                    , declareQueue, deleteQueue )
 import Network.AMQP.Types ( AMQPException(..) )
 import System.Exit ( exitFailure )
 import System.Posix.Unistd ( sleep )
@@ -52,6 +53,20 @@ tests = test [ "alwaysPass" ~: TestCase $ do
                        assertFailure err
                    Right (ConnectionClosedException "Normal") ->
                        killThread tid
+             , "queueDeclare" ~: TestCase $ do
+                 withConnection $ \conn -> do
+                   declareQueue conn "test-queue"
+                   return ()
+             , "queueDoubleDeclare" ~: TestCase $ do
+                 withConnection $ \conn -> do
+                   declareQueue conn "test-queue"
+                   declareQueue conn "test-queue"
+                   return ()
+             , "queueDeclareDelete" ~: TestCase $ do
+                 withConnection $ \conn -> do
+                   declareQueue conn "test-queue"
+                   deleteQueue conn "test-queue"
+                   return ()
              ]
 
 openDefaultConnection :: IO Connection

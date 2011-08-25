@@ -230,6 +230,7 @@ genMethodPayloadBinaryInstance domainMap classes = do
                        putWord16be $(litE . integerL $
                                      fromIntegral mthdIdx) >>
                        $(putAll vs) |]
+        -- FIXME: coalesce consecutive bits
         putAll [] = [| return () |]
         putAll (v:vs) = [| put $(varE v) >> $(putAll vs) |]
 
