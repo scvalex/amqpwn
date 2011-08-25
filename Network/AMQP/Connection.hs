@@ -31,17 +31,20 @@ import Control.Concurrent.STM ( atomically
 import qualified Control.Exception as CE
 import Data.Binary ( Binary(..) )
 import qualified Data.Binary.Put as Put
-import Data.ByteString.Char8 ( pack )
-import Data.ByteString.Lazy.Char8 ( unpack )
+import qualified Data.ByteString.Char8 as BS
+import qualified Data.ByteString.Lazy.Char8 as BL
 import qualified Data.IntMap as IM
 import qualified Data.Map as M
 import Data.String ( IsString(..) )
-import Network.AMQP.Protocol ( readFrameSock, writeFrameSock, writeFrames )
+import Data.Word ( Word64 )
+import Network.AMQP.Protocol ( readFrameSock, writeFrameSock, writeFrames
+                             , methodHasContent )
 import Network.AMQP.Helpers ( toStrict, modifyTVar, withTMVarIO )
-import Network.AMQP.Types ( Connection(..), Channel(..), Assembler(..), ChannelId
+import Network.AMQP.Types ( Connection(..), Channel(..), Assembler(..)
+                          , ChannelId, controlChannel
                           , QueueName
                           , Frame(..), FramePayload(..)
-                          , Method(..), MethodPayload(..)
+                          , Method(..), MethodPayload(..), ContentHeaderProperties
                           , FieldTable(..), ShortString(..), LongString(..)
                           , AMQPException(..) )
 import Network.BSD ( getProtocolNumber, getHostByName, hostAddress )
@@ -81,13 +84,14 @@ openConnection host port vhost username password = do
            `CE.catch` (\(e :: AMQPException) -> finalizeConnection conn e)
            `CE.finally` (finalizeConnection conn $
                          ConnectionClosedException "Normal")
+  openChannel conn controlChannel
   return conn
     where
       doConnectionOpen :: ConnectingState -> Socket -> Int -> IO Connection
       doConnectionOpen CInitiating sock frameMax = do
         -- C: protocol-header
         NB.send sock . toStrict . Put.runPut $ do
-          Put.putByteString $ pack "AMQP"
+          Put.putByteString $ BS.pack "AMQP"
           mapM_ Put.putWord8 [0, 0, 9, 1]
         doConnectionOpen CStarting1 sock frameMax
       doConnectionOpen CStarting1 sock frameMax = do
@@ -108,7 +112,7 @@ openConnection host port vhost username password = do
                     "unexpected frame on non-0 channel"
       doConnectionOpen CStarting2 sock frameMax = do
         -- C: start_ok
-        let loginTable = LongString . drop 4 . unpack . Put.runPut . put $
+        let loginTable = LongString . drop 4 . BL.unpack . Put.runPut . put $
                FieldTable (M.fromList [ ( fromString "LOGIN"
                                         , fromString username)
                                       , ( fromString "PASSWORD"
@@ -341,17 +345,75 @@ deleteQueue conn qn = do
   let (SimpleMethod (Queue_delete_ok count)) = resp
   return (fromIntegral count)
 
--- FIXME: there's a race between writing res to the rpc queue and
--- writing the command on the wire.
+-- | Perform a synchroneous AMQP requst.
 request :: Connection -> Method -> IO Method
-request conn method = do
+request conn method = request' conn controlChannel method
+
+-- FIXME: There's a race between writing res to the rpc queue and
+-- writing the command on the wire.
+-- FIXME: Proper error handling.
+request' :: Connection -> ChannelId -> Method -> IO Method
+request' conn chId method = do
   res <- atomically $ newEmptyTMVar
   atomically $ writeTChan (getRPCQueue conn) res
-  controlCh <- atomically $ readTVar (getControlChannel conn)
-  unsafeWriteMethod conn controlCh method
+  unsafeWriteMethod conn chId method
   atomically $ takeTMVar res
 
 -- | Write a method to the connection.  Does /not/ handle exceptions.
 unsafeWriteMethod :: Connection -> ChannelId -> Method -> IO ()
 unsafeWriteMethod conn chId (SimpleMethod m) = do
     writeFrames conn chId [MethodPayload m]
+
+-- | Open a new channel and add it to the connection's channel map.
+openChannel :: Connection -> ChannelId -> IO ()
+openChannel conn chId = do
+  ch <- newChannel
+  atomically $ modifyTVar (getChannels conn) (\m -> IM.insert chId ch m)
+  openChannel' conn chId
+  `CE.catch` (\(e :: CE.IOException) -> do
+                atomically $ modifyTVar (getChannels conn)
+                                        (\m -> IM.delete chId m)
+                CE.throw e)
+
+-- | Perform the actual @channel.open@.
+openChannel' :: Connection -> ChannelId -> IO ()
+openChannel' conn chId = do
+  resp <- request' conn chId . SimpleMethod $ Channel_open (fromString "")
+  let (SimpleMethod (Channel_open_ok _)) = resp
+  return ()
+
+-- | Create a new 'Channel' value.
+newChannel :: IO Channel
+newChannel = atomically $ do
+  assembler <- newTVar newEmptyAssembler
+  chanClosed <- newEmptyTMVar
+  consumer <- newEmptyTMVar
+  return Channel { getAssembler  = assembler
+                 , getChanClosed = chanClosed
+                 , getConsumer   = consumer }
+
+-- | Create a new empty 'Assembler'.
+newEmptyAssembler :: Assembler
+newEmptyAssembler =
+    Assembler $ \m@(MethodPayload p) ->
+        if methodHasContent m
+          then Left (newContentCollector p)
+          else Right (SimpleMethod p, newEmptyAssembler)
+    where
+      newContentCollector :: MethodPayload -> Assembler
+      newContentCollector p =
+          Assembler $ \(ContentHeaderPayload _ _ bodySize props) ->
+              if bodySize > 0
+              then Left (bodyContentCollector p props bodySize [])
+              else Right (ContentMethod p props BL.empty, newEmptyAssembler)
+
+      bodyContentCollector :: MethodPayload -> ContentHeaderProperties -> Word64
+                           -> [BL.ByteString] -> Assembler
+      bodyContentCollector p props remData acc =
+          Assembler $ \(ContentBodyPayload payload) ->
+              let remData' = remData - fromIntegral (BL.length payload)
+              in if remData' > 0
+                 then Left (bodyContentCollector p props remData' (payload:acc))
+                 else Right ( ContentMethod p props
+                                            (BL.concat $ reverse (payload:acc))
+                            , newEmptyAssembler )

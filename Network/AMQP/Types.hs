@@ -5,7 +5,8 @@ module Network.AMQP.Types (
         module Network.AMQP.Framing,
 
         -- * AMQP high-level types
-        Connection(..), Channel(..), Assembler(..), ChannelId,
+        Connection(..), Channel(..), Assembler(..),
+        ChannelId, controlChannel,
 
         -- * Convenience types
         QueueName,
@@ -52,8 +53,6 @@ data Connection = Connection
       -- ^ open channels ('ChannelId' => 'Channel')
     , getLastChannelId :: TVar ChannelId
       -- ^ for auto-incrementing the 'ChannelId's
-    , getControlChannel :: TVar ChannelId
-      -- ^ channel used for /control/ commands
     , getRPCQueue :: TChan (TMVar Method)
       -- ^ for every blocking request, a 'TMVar' is stored here waiting
       -- for the response
@@ -79,6 +78,11 @@ newtype Assembler = Assembler (FramePayload -> Either Assembler (Method, Assembl
 -- 'ChannelID', which is actually a Word16 and is only used
 -- internally.
 type ChannelId = Int
+
+-- | The channel on which all control (i.e. non-publish) commands are
+-- issued.
+controlChannel :: ChannelId
+controlChannel = 1
 
 -- Convenience types
 
