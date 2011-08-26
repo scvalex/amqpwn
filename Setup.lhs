@@ -29,7 +29,7 @@ maybeGenerateFramingData = do
       mod1 <- getModificationTime framingDataFile
       mod2 <- getModificationTime amqpSpecFile
       mod3 <- getModificationTime codegenFile
-      if mod1 < mod2 || mod1 < mod3
+      if any (mod1 <) [mod2, mod3]
         then fail "FramingData out of date"
         else return ()
 
