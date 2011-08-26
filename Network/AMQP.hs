@@ -25,6 +25,20 @@ import Network.AMQP.Types
 -- or 0, otherwise.
 declareQueue :: Connection -> QueueName -> IO Int
 declareQueue conn qn = do
+  (_, count) <- declareQueueInternal conn qn
+  return count
+
+-- | Declare an anonymous queue.  Throw an exception on failure.
+-- Return the name of the newly created queue.
+declareQueueAnon :: Connection -> IO QueueName
+declareQueueAnon conn = do
+  (name, _) <- declareQueueInternal conn ""
+  return name
+
+-- | Declare a queue with the given name.  Return its name (useful for
+-- anonymous queues) and the number of messages on it.
+declareQueueInternal :: Connection -> QueueName -> IO (QueueName, Int)
+declareQueueInternal conn qn = do
   resp <- request conn . SimpleMethod $
          Queue_declare 0               -- ticket
                        (fromString qn) -- name
@@ -34,24 +48,8 @@ declareQueue conn qn = do
                        False           -- auto-delete
                        False           -- nowait
                        (FieldTable (M.fromList []))
-  let !(SimpleMethod (Queue_declare_ok _ count _)) = resp
-  return (fromIntegral count)
-
--- | Declare an anonymous queue.  Throw an exception on failure.
--- Return the name of the newly created queue.
-declareQueueAnon :: Connection -> IO QueueName
-declareQueueAnon conn = do
-  resp <- request conn . SimpleMethod $
-         Queue_declare 0               -- ticket
-                       (fromString "") -- name
-                       False           -- passive
-                       True            -- durable
-                       False           -- exclusive
-                       False           -- auto-delete
-                       False           -- nowait
-                       (FieldTable (M.fromList []))
-  let !(SimpleMethod (Queue_declare_ok (ShortString name) _ _)) = resp
-  return name
+  let !(SimpleMethod (Queue_declare_ok (ShortString name) count _)) = resp
+  return (name, (fromIntegral count))
 
 -- | Delete the queue with the specified name.  Throw an exception if
 -- the queue does not exist.  Return the number of messages on the
