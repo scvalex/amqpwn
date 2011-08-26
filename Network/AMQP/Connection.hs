@@ -262,7 +262,6 @@ addConnectionClosedHandler conn handler = do
 connectionReceiver :: Connection -> Socket -> IO ()
 connectionReceiver conn sock = do
     (Frame chId payload) <- readFrameSock sock (getMaxFrameSize conn)
-    printf "read frame for channel %d: %s\n" chId (show payload)
     forwardToChannel chId payload
     connectionReceiver conn sock
         where
@@ -305,7 +304,6 @@ connectionReceiver conn sock = do
                 Just method -> handleInboundMethod method
 
           handleInboundMethod method = do
-            printf "handling inbound %s\n" (show method)
             atomically $ do
               noRPC <- isEmptyTChan (getRPCQueue conn)
               resp <- readTChan (getRPCQueue conn)
@@ -328,7 +326,6 @@ request' conn chId method = do
   res <- atomically $ newEmptyTMVar
   atomically $ writeTChan (getRPCQueue conn) res
   unsafeWriteMethod conn chId method
-  printf "sent %s\n" (show method)
   atomically $ takeTMVar res
 
 -- | Write a method to the connection.  Does /not/ handle exceptions.

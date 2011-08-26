@@ -10,18 +10,19 @@ module Network.AMQP.FramingTypes (
         genMethodPayloadBinaryInstance,
 
         -- * Helpers for the generated code
-        getPropBits, putPropBits, condGet, condPut,
+        getPropBits, putPropBits, condGet, condPut, getBits, putBits
     ) where
 
 import Control.Monad ( replicateM )
 import Data.Binary ( Binary(..) )
-import Data.Binary.Get ( Get, getWord16be )
-import Data.Binary.Put ( Put, putWord16be )
+import Data.Binary.Get ( Get, getWord16be, getWord8 )
+import Data.Binary.Put ( Put, putWord16be, putWord8 )
 import Data.Bits
 import Data.Char
+import Data.List ( groupBy )
 import qualified Data.Map as M
 import Data.Maybe ( isJust )
-import Data.Word ( Word16 )
+import Data.Word ( Word8, Word16 )
 import Language.Haskell.TH
 import Language.Haskell.TH.Syntax ( Quasi )
 import Network.AMQP.Types.Internal ( Bit )
@@ -92,7 +93,25 @@ mkField domainMap f df@(DomainField _ _) =
     (NotStrict, f $ ConT $ mkName $ translateType
                          $ fieldType domainMap df)
 
--- FIXME add 'his' todos here
+-- Bits need special handling because AMQP requires contiguous bits to
+-- be packed into a Word8
+
+-- | Packs up to 8 bits into a Word8.
+putBits :: [Bit] -> Put
+putBits = putWord8 . putBits' 0
+    where
+      putBits' _ [] = 0
+      putBits' offset (x:xs) =
+          (shiftL (fromIntegral $ fromEnum x) offset) .|. (putBits' (offset+1) xs)
+
+-- | Reads up to 8 bits from a Word8.
+getBits :: Int -> Get [Bool]
+getBits num = getWord8 >>= \x -> return $ getBits' num 0 x
+    where
+      getBits' :: Int -> Int -> Word8 -> [Bool]
+      getBits' 0 _ _ = []
+      getBits' n offset x =
+          ((x .&. (2^offset)) /= 0) : (getBits' (n-1) (offset+1) x)
 
 -- | Get 16 bits.
 getPropBits :: Integer -> Get [Bit]
@@ -114,9 +133,8 @@ putPropBits xs = putWord16be $ (putPropBits' 0 xs)
     where
       putPropBits' _ [] = 0
       putPropBits' offset (y:ys) =
-          (shiftL (toInt y) (15-offset)) .|. (putPropBits' (offset+1) ys)
-      toInt True = 1
-      toInt False = 0
+          (shiftL (fromIntegral $ fromEnum y) (15-offset)) .|.
+          (putPropBits' (offset+1) ys)
 
 -- | Only put Justs, ignoring Nothings.
 condPut :: (Binary b) => (Maybe b) -> Put
@@ -222,17 +240,22 @@ genMethodPayloadBinaryInstance domainMap classes = do
         mkClause clsNam clsIdx (Method nam index fields) = do
           vs <- replicateM (length fields) (newName "x")
           clause [conP (mkName $ mkMethodName clsNam nam) (map varP vs)]
-                 (mkClauseBody clsIdx index vs)
+                 (mkClauseBody clsIdx index vs fields)
                  []
-        mkClauseBody clsIdx mthdIdx vs =
+        mkClauseBody clsIdx mthdIdx vs fields =
             normalB [| putWord16be $(litE . integerL $
                                      fromIntegral clsIdx) >>
                        putWord16be $(litE . integerL $
                                      fromIntegral mthdIdx) >>
-                       $(putAll vs) |]
-        -- FIXME: coalesce consecutive bits
+                       $(putAll $ groups fields vs) |]
+        groups fields = map (map snd) .
+                        groupBy (\(fx, _) (fy, _) ->
+                                     fieldType domainMap fx == "bit" &&
+                                     fieldType domainMap fy == "bit") .
+                        zip fields
         putAll [] = [| return () |]
-        putAll (v:vs) = [| put $(varE v) >> $(putAll vs) |]
+        putAll ([v]:vss) = [| put $(varE v) >> $(putAll vss) |]
+        putAll (vs:vss) = [| putBits $(listE $ map varE vs) >> $(putAll vss) |]
 
         mkGet :: DecQ
         mkGet = funD (mkName "get") [clause [] mkGetBody []]
@@ -252,9 +275,12 @@ genMethodPayloadBinaryInstance domainMap classes = do
                   []
         mkMatchBody clsNam mthdNam fields = do
           vs <- replicateM (length fields) (newName "x")
-          normalB $ getAll vs vs
+          let gs = groups fields vs
+          normalB $ getAll vs gs
             where
               getAll vs [] = [| return $(appAll (conE . mkName $
                                               mkMethodName clsNam mthdNam)
                                              (map varE vs)) |]
-              getAll vs (w:ws) = [| get >>= $(lamE [varP w] (getAll vs ws)) |]
+              getAll vs ([w]:wss) = [| get >>= $(lamE [varP w] (getAll vs wss)) |]
+              getAll vs (ws:wss) = [| getBits $(litE . integerL . fromIntegral $ length ws) >>=
+                                      $(lamE [listP $ map varP ws] (getAll vs wss)) |]
