@@ -9,7 +9,7 @@ module Network.AMQP.Types (
         ChannelId, controlChannel,
 
         -- * Convenience types
-        QueueName,
+        QueueName, ExchangeName, ExchangeType,
 
         -- * Message/Envelope
         Method(..), Message(..), newMsg, Envelope(..),
@@ -88,6 +88,14 @@ controlChannel = 1
 
 -- | We represent queue names as 'String's.
 type QueueName = String
+
+-- | We represent exchange names as 'String's.
+type ExchangeName = String
+
+-- | We represent exchange types as 'String's.  We could use a
+-- datatype here, but since the meaning of the exchange's type is
+-- defined by the broker, we'll just leave it free-form.
+type ExchangeType = String
 
 -- Message/Envelope
 

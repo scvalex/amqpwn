@@ -5,7 +5,12 @@ module Network.AMQP (
         addConnectionClosedHandler,
 
         -- * Queue operations
-        declareQueue, declareQueueAnon, deleteQueue
+        QueueName,
+        declareQueue, declareQueueAnon, deleteQueue,
+
+        -- * Exchange operations
+        ExchangeName, ExchangeType,
+        declareExchange, deleteExchange
     ) where
 
 import qualified Data.Map as M
@@ -27,7 +32,7 @@ declareQueue conn qn = do
                        True            -- durable
                        False           -- exclusive
                        False           -- auto-delete
-                       False           -- no-wait
+                       False           -- nowait
                        (FieldTable (M.fromList []))
   let !(SimpleMethod (Queue_declare_ok _ count _)) = resp
   return (fromIntegral count)
@@ -43,7 +48,7 @@ declareQueueAnon conn = do
                        True            -- durable
                        False           -- exclusive
                        False           -- auto-delete
-                       False           -- no-wait
+                       False           -- nowait
                        (FieldTable (M.fromList []))
   let !(SimpleMethod (Queue_declare_ok (ShortString name) _ _)) = resp
   return name
@@ -61,3 +66,36 @@ deleteQueue conn qn = do
                       False           -- nowait
   let !(SimpleMethod (Queue_delete_ok count)) = resp
   return (fromIntegral count)
+
+-- | Declare an exchange with the specified name, type and internal
+-- setting.  Throw an exception on failure.
+declareExchange :: Connection
+                -> ExchangeName
+                -> ExchangeType
+                -> Bool          -- ^ internal
+                -> IO ()
+declareExchange conn en et internal = do
+  resp <- request conn . SimpleMethod $
+         Exchange_declare 0               -- ticket
+                          (fromString en) -- name
+                          (fromString et) -- type
+                          False           -- passive
+                          True            -- durable
+                          False           -- auto-delete
+                          internal        -- guess what this is
+                          False           -- nowait
+                          (FieldTable (M.fromList []))
+  let !(SimpleMethod Exchange_declare_ok) = resp
+  return ()
+
+-- | Delete the exchange with the given name.  Throw an exception if
+-- the exchange does not exist.
+deleteExchange :: Connection -> ExchangeName -> IO ()
+deleteExchange conn en = do
+  resp <- request conn . SimpleMethod $
+         Exchange_delete 0               -- ticket
+                         (fromString en) -- name
+                         False           -- if-unused
+                         False           -- nowait
+  let !(SimpleMethod Exchange_delete_ok) = resp
+  return ()
