@@ -278,15 +278,18 @@ connectionReceiver conn sock = do
           forwardToChannel 0 msg =
               CE.throw . ConnectionClosedException $
                 printf "unexpected msg on channel zero: %s" (show msg)
+          forwardToChannel chId (MethodPayload (Channel_close _ _ _ _)) =
+              CE.throw . ChannelClosedException $
+                printf "channel %d closed" chId
 
           -- Forward asynchronous message to other channels
-          forwardToChannel chanId payload = do
+          forwardToChannel chId payload = do
               act <- atomically $ do
                        channels <- readTVar (getChannels conn)
-                       case IM.lookup (fromIntegral chanId) channels of
+                       case IM.lookup (fromIntegral chId) channels of
                          Just ch -> return $ processChannelPayload ch payload
                          Nothing -> return $ CE.throw . ConnectionClosedException $
-                                      printf "channel %d not open" chanId
+                                      printf "channel %d not open" chId
               act
 
           processChannelPayload ch payload = do

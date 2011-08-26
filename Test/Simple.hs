@@ -69,7 +69,7 @@ tests = test [ "alwaysPass" ~: TestCase $ do
                    return ()
              , "queueDelete" ~: TestCase $ do
                  withConnection $ \conn -> do
-                   handle (\(_ :: IOException) -> return ()) $ do
+                   handle (\(ChannelClosedException _) -> return ()) $ do
                      deleteQueue conn "test-queue"
                      assertFailure "deleted non-existing queue"
              ]
