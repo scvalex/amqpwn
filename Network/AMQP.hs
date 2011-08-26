@@ -29,7 +29,7 @@ declareQueue conn qn = do
                        False           -- auto-delete
                        False           -- no-wait
                        (FieldTable (M.fromList []))
-  let (SimpleMethod (Queue_declare_ok _ count _)) = resp
+  let !(SimpleMethod (Queue_declare_ok _ count _)) = resp
   return (fromIntegral count)
 
 -- | Declare an anonymous queue.  Throw an exception on failure.
@@ -45,7 +45,7 @@ declareQueueAnon conn = do
                        False           -- auto-delete
                        False           -- no-wait
                        (FieldTable (M.fromList []))
-  let (SimpleMethod (Queue_declare_ok (ShortString name) _ _)) = resp
+  let !(SimpleMethod (Queue_declare_ok (ShortString name) _ _)) = resp
   return name
 
 -- | Delete the queue with the specified name.  Throw an exception if
@@ -59,5 +59,5 @@ deleteQueue conn qn = do
                       False           -- if-unused
                       False           -- if-empty
                       False           -- nowait
-  let (SimpleMethod (Queue_delete_ok count)) = resp
+  let !(SimpleMethod (Queue_delete_ok count)) = resp
   return (fromIntegral count)
