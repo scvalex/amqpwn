@@ -262,6 +262,7 @@ addConnectionClosedHandler conn handler = do
 connectionReceiver :: Connection -> Socket -> IO ()
 connectionReceiver conn sock = do
     (Frame chId payload) <- readFrameSock sock (getMaxFrameSize conn)
+    printf "Inbound frame: %s\n" (show payload)
     forwardToChannel chId payload
     connectionReceiver conn sock
         where
@@ -287,7 +288,8 @@ connectionReceiver conn sock = do
                 putTMVar resp . CE.throw . ChannelClosedException $
                            printf "channel %d closed" chId
               unsafeWriteMethod conn controlChannel (SimpleMethod Channel_close_ok)
-              openChannel' conn controlChannel
+              forkIO $ openChannel' conn controlChannel
+              return ()
           forwardToChannel chId payload = do
               act <- atomically $ do
                        channels <- readTVar (getChannels conn)
