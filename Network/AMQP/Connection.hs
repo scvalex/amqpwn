@@ -26,8 +26,7 @@ import Control.Concurrent ( killThread, myThreadId, forkIO )
 import Control.Concurrent.STM ( atomically
                               , newTMVar, newEmptyTMVar, isEmptyTMVar
                               , readTMVar, tryPutTMVar, putTMVar, takeTMVar
-                              , newTVar, readTVar, writeTVar
-                              , newTChan, isEmptyTChan, readTChan, writeTChan )
+                              , newTVar, readTVar, writeTVar )
 import qualified Control.Exception as CE
 import Control.Monad ( when )
 import Data.Binary ( Binary(..) )
@@ -169,14 +168,12 @@ openConnection host port vhost username password = do
         myConnClosedHandlers <- newTVar []
         myConnChannels <- newTVar IM.empty
         lastChanId <- newTVar 0
-        rpcQueue <- newTChan
         return $ Connection { getSocket            = sockVar
                             , getMaxFrameSize      = frameMax
                             , getConnClosed        = cClosed
                             , getConnCloseHandlers = myConnClosedHandlers
                             , getChannels          = myConnChannels
                             , getLastChannelId     = lastChanId
-                            , getRPCQueue          = rpcQueue
                             }
       finalizeConnection conn reason = do
         -- try closing socket
@@ -188,25 +185,18 @@ openConnection host port vhost username password = do
           -- mark as closed
           tryPutTMVar (getConnClosed conn) reason
 
+          -- kill any pending RPCs
+          rpcs <- return . map (getChannelRPC . snd) . IM.toList
+               =<< readTVar (getChannels conn)
+          mapM_ (flip putTMVar (CE.throw reason)) rpcs
+
           -- clear channel threads
           writeTVar (getChannels conn) IM.empty
-
-          -- kill any pending RPCs
-          killRPCQueue reason (getRPCQueue conn)
 
           readTVar (getConnCloseHandlers conn)
 
         -- notify connection-close-handlers
         mapM_ ($ reason) handlers
-
-      killRPCQueue reason queue = do
-        emp <- isEmptyTChan queue
-        if emp
-          then return ()
-          else do
-            x <- readTChan queue
-            tryPutTMVar x $ CE.throw reason
-            killRPCQueue reason queue
 
 -- | Close a connection normally.
 closeConnectionNormal :: Connection -> IO ()
@@ -294,9 +284,8 @@ connectionReceiver conn sock = do
                   Nothing -> return ()
                   Just ch -> do
                     when (getChannelType ch == ControlChannel) $ do
-                      resp <- readTChan (getRPCQueue conn)
-                      putTMVar resp . CE.throw . ChannelClosedException $
-                        printf "channel %d closed" chId
+                      putTMVar (getChannelRPC ch) . CE.throw .
+                        ChannelClosedException $ printf "channel %d closed" chId
               closeChannel conn chId
           forwardToChannel chId payload = do
               act <- atomically $ do
@@ -319,36 +308,21 @@ connectionReceiver conn sock = do
                                        return (Just method)
               case mMethod of
                 Nothing     -> return ()
-                Just method -> handleInboundMethod method
-
-          handleInboundMethod method = do
-            atomically $ do
-              noRPC <- isEmptyTChan (getRPCQueue conn)
-              resp <- readTChan (getRPCQueue conn)
-              putTMVar resp $ if not noRPC
-                              then method
-                              else CE.throw . ClientException $
-                                   printf "got reponse but no pending RPC: %s"
-                                          (show method)
-              -- I feel dirty now.
+                Just method -> atomically $ putTMVar (getChannelRPC ch) method
 
 -- | Perform a synchroneous AMQP requst.
 request :: Connection -> Method -> IO Method
 request conn method = do
   chId <- atomically $ modifyTVar (getLastChannelId conn) (+1)
-  openChannel conn chId
-  request' conn chId method
+  ch <- openChannel conn chId
+  request' conn ch chId method
 --    `CE.finally` closeChannel conn chId
 
--- FIXME: There's a race between writing res to the rpc queue and
--- writing the command on the wire.
 -- FIXME: Proper error handling.
-request' :: Connection -> ChannelId -> Method -> IO Method
-request' conn chId method = do
-  res <- atomically $ newEmptyTMVar
-  atomically $ writeTChan (getRPCQueue conn) res
+request' :: Connection -> Channel -> ChannelId -> Method -> IO Method
+request' conn ch chId method = do
   unsafeWriteMethod conn chId method
-  atomically $ takeTMVar res
+  atomically $ takeTMVar (getChannelRPC ch)
 
 -- | Write a method to the connection.  Does /not/ handle exceptions.
 unsafeWriteMethod :: Connection -> ChannelId -> Method -> IO ()
@@ -356,11 +330,12 @@ unsafeWriteMethod conn chId (SimpleMethod m) = do
     writeFrames conn chId [MethodPayload m]
 
 -- | Open a new channel and add it to the connection's channel map.
-openChannel :: Connection -> ChannelId -> IO ()
+openChannel :: Connection -> ChannelId -> IO Channel
 openChannel conn chId = do
   ch <- newChannel
   atomically $ modifyTVar (getChannels conn) (\m -> IM.insert chId ch m)
   openChannel' conn chId
+  return ch
   `CE.catch` (\(e :: CE.IOException) -> do
                 atomically $ modifyTVar (getChannels conn)
                                         (\m -> IM.delete chId m)
@@ -392,7 +367,9 @@ newChannel = atomically $ do
   assembler <- newTVar newEmptyAssembler
   chanClosed <- newEmptyTMVar
   consumer <- newEmptyTMVar
+  rpc <- newEmptyTMVar
   return Channel { getAssembler   = assembler
                  , getChanClosed  = chanClosed
                  , getConsumer    = consumer
-                 , getChannelType = ControlChannel }
+                 , getChannelType = ControlChannel
+                 , getChannelRPC  = rpc }

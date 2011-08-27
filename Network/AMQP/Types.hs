@@ -23,7 +23,7 @@ module Network.AMQP.Types (
     ) where
 
 import Control.Applicative ( Applicative(..), (<$>) )
-import Control.Concurrent.STM ( TChan, TVar, TMVar )
+import Control.Concurrent.STM ( TVar, TMVar )
 import Control.Exception ( Exception )
 import Data.Binary ( Binary(..) )
 import Data.Binary.Get ( Get, getWord8, getLazyByteString )
@@ -53,9 +53,6 @@ data Connection = Connection
       -- ^ open channels ('ChannelId' => 'Channel')
     , getLastChannelId :: TVar ChannelId
       -- ^ for auto-incrementing the 'ChannelId's
-    , getRPCQueue :: TChan (TMVar Method)
-      -- ^ for every blocking request, a 'TMVar' is stored here waiting
-      -- for the response
     }
 
 -- | Represents an AMQP channel.
@@ -67,6 +64,9 @@ data Channel = Channel
     , getConsumer :: TMVar ((Message, Envelope) -> IO ())
       -- ^ consumer callback
     , getChannelType :: ChannelType
+      -- ^ what the channel is used for
+    , getChannelRPC :: TMVar Method
+      -- ^ holder for the channel's control command result
     }
 
 -- | Represents a "method assembler".  It's effectively a function
