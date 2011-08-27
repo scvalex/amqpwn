@@ -262,8 +262,7 @@ addConnectionClosedHandler conn handler = do
 connectionReceiver :: Connection -> Socket -> IO ()
 connectionReceiver conn sock = do
     (Frame chId payload) <- readFrameSock sock (getMaxFrameSize conn)
-    printf "Inbound frame: %s\n" (show payload)
-    forwardToChannel chId payload
+    forwardToChannel (fromIntegral chId) payload
     connectionReceiver conn sock
         where
           -- Forward to channel0.
@@ -291,18 +290,18 @@ connectionReceiver conn sock = do
           forwardToChannel chId (MethodPayload (Channel_close _ _ _ _)) = do
               atomically $ do
                 chs <- readTVar (getChannels conn)
-                case IM.lookup (fromIntegral chId) chs of
+                case IM.lookup chId chs of
                   Nothing -> return ()
                   Just ch -> do
                     when (getChannelType ch == ControlChannel) $ do
                       resp <- readTChan (getRPCQueue conn)
                       putTMVar resp . CE.throw . ChannelClosedException $
                         printf "channel %d closed" chId
-              closeChannel conn (fromIntegral chId)
+              closeChannel conn chId
           forwardToChannel chId payload = do
               act <- atomically $ do
                        channels <- readTVar (getChannels conn)
-                       case IM.lookup (fromIntegral chId) channels of
+                       case IM.lookup chId channels of
                          Just ch -> return $ processChannelPayload ch payload
                          Nothing -> return $ CE.throw . ConnectionClosedException $
                                       printf "channel %d not open" chId
