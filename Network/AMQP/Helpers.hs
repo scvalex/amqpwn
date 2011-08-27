@@ -22,8 +22,12 @@ toLazy :: BS.ByteString -> BL.ByteString
 toLazy x = BL.fromChunks [x]
 
 -- | Modify a TVar in-place.
-modifyTVar :: TVar a -> (a -> a) -> STM ()
-modifyTVar var f = writeTVar var . f =<< readTVar var
+modifyTVar :: TVar a -> (a -> a) -> STM a
+modifyTVar var f = do
+  val <- readTVar var
+  let val' = f val
+  writeTVar var val'
+  return val'
 
 -- | Take a TMVar, run an action with it and put it back.  The action
 -- has exclusive access to the value while it is executing.

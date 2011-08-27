@@ -6,7 +6,7 @@ module Network.AMQP.Types (
 
         -- * AMQP high-level types
         Connection(..), Channel(..), Assembler(..),
-        ChannelId, controlChannel,
+        ChannelId, ChannelType(..),
 
         -- * Convenience types
         QueueName, ExchangeName, ExchangeType,
@@ -66,6 +66,7 @@ data Channel = Channel
       -- ^ reason for closing the channel
     , getConsumer :: TMVar ((Message, Envelope) -> IO ())
       -- ^ consumer callback
+    , getChannelType :: ChannelType
     }
 
 -- | Represents a "method assembler".  It's effectively a function
@@ -79,10 +80,9 @@ newtype Assembler = Assembler (FramePayload -> Either Assembler (Method, Assembl
 -- internally.
 type ChannelId = Int
 
--- | The channel on which all control (i.e. non-publish) commands are
--- issued.
-controlChannel :: ChannelId
-controlChannel = 1
+-- | What is the channel used for?  Control commands?  Publishing?
+data ChannelType = ControlChannel
+                   deriving ( Eq )
 
 -- Convenience types
 

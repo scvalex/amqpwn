@@ -29,6 +29,7 @@ import Control.Concurrent.STM ( atomically
                               , newTVar, readTVar, writeTVar
                               , newTChan, isEmptyTChan, readTChan, writeTChan )
 import qualified Control.Exception as CE
+import Control.Monad ( when )
 import Data.Binary ( Binary(..) )
 import qualified Data.Binary.Put as Put
 import qualified Data.ByteString.Char8 as BS
@@ -40,7 +41,7 @@ import Network.AMQP.Protocol ( readFrameSock, writeFrameSock, writeFrames
                              , newEmptyAssembler )
 import Network.AMQP.Helpers ( toStrict, modifyTVar, withTMVarIO )
 import Network.AMQP.Types ( Connection(..), Channel(..), Assembler(..)
-                          , ChannelId, controlChannel
+                          , ChannelId, ChannelType(..)
                           , Frame(..), FramePayload(..)
                           , Method(..), MethodPayload(..)
                           , FieldTable(..), ShortString(..), LongString(..)
@@ -82,7 +83,6 @@ openConnection host port vhost username password = do
            `CE.catch` (\(e :: AMQPException) -> finalizeConnection conn e)
            `CE.finally` (finalizeConnection conn $
                          ConnectionClosedException "Normal")
-  openChannel conn controlChannel
   return conn
     where
       doConnectionOpen :: ConnectingState -> Socket -> Int -> IO Connection
@@ -266,7 +266,7 @@ connectionReceiver conn sock = do
     forwardToChannel chId payload
     connectionReceiver conn sock
         where
-          -- Forward to channel0
+          -- Forward to channel0.
           forwardToChannel 0 (MethodPayload Connection_close_ok) = do
               atomically $ tryPutTMVar (getConnClosed conn)
                                        (ConnectionClosedException "Normal")
@@ -280,16 +280,25 @@ connectionReceiver conn sock = do
               CE.throw . ConnectionClosedException $
                 printf "unexpected msg on channel zero: %s" (show msg)
 
-          -- Forward asynchronous message to other channels
-          forwardToChannel chId (MethodPayload (Channel_close _ _ _ _))
-             | fromIntegral chId == controlChannel = do
-              atomically $ do
-                resp <- readTChan (getRPCQueue conn)
-                putTMVar resp . CE.throw . ChannelClosedException $
-                           printf "channel %d closed" chId
-              unsafeWriteMethod conn controlChannel (SimpleMethod Channel_close_ok)
-              forkIO $ openChannel' conn controlChannel
+          -- Ignore @channel.close_ok@.  Because we're awesome.
+          forwardToChannel _ (MethodPayload Channel_close_ok) =
               return ()
+          -- See above.
+          forwardToChannel _ (MethodPayload (Channel_open_ok _)) =
+              return ()
+
+          -- Forward asynchronous message to other channels.
+          forwardToChannel chId (MethodPayload (Channel_close _ _ _ _)) = do
+              atomically $ do
+                chs <- readTVar (getChannels conn)
+                case IM.lookup (fromIntegral chId) chs of
+                  Nothing -> return ()
+                  Just ch -> do
+                    when (getChannelType ch == ControlChannel) $ do
+                      resp <- readTChan (getRPCQueue conn)
+                      putTMVar resp . CE.throw . ChannelClosedException $
+                        printf "channel %d closed" chId
+              closeChannel conn (fromIntegral chId)
           forwardToChannel chId payload = do
               act <- atomically $ do
                        channels <- readTVar (getChannels conn)
@@ -326,7 +335,11 @@ connectionReceiver conn sock = do
 
 -- | Perform a synchroneous AMQP requst.
 request :: Connection -> Method -> IO Method
-request conn method = request' conn controlChannel method
+request conn method = do
+  chId <- atomically $ modifyTVar (getLastChannelId conn) (+1)
+  openChannel conn chId
+  request' conn chId method
+--    `CE.finally` closeChannel conn chId
 
 -- FIXME: There's a race between writing res to the rpc queue and
 -- writing the command on the wire.
@@ -354,12 +367,25 @@ openChannel conn chId = do
                                         (\m -> IM.delete chId m)
                 CE.throw e)
 
--- | Perform the actual @channel.open@.
+-- | Perform the actual @channel.open@ asynchronously.  I.e. don't
+-- wait for the @channel.open_ok@.
 openChannel' :: Connection -> ChannelId -> IO ()
-openChannel' conn chId = do
-  resp <- request' conn chId . SimpleMethod $ Channel_open (fromString "")
-  let (SimpleMethod (Channel_open_ok _)) = resp
+openChannel' conn chId =
+    unsafeWriteMethod conn chId . SimpleMethod $ Channel_open (fromString "")
+
+-- | Perform the @channel.close@ and remove the channel from the
+-- connection's channel map.
+closeChannel :: Connection -> ChannelId -> IO ()
+closeChannel conn chId = do
+  closeChannel' conn chId
+  atomically $ modifyTVar (getChannels conn) (\m -> IM.delete chId m)
   return ()
+
+-- | Perform the actual @channel.close@ asynchronously.  I.e. don't
+-- wait for the @channel.close_ok@.
+closeChannel' :: Connection -> ChannelId -> IO ()
+closeChannel' conn chId =
+    unsafeWriteMethod conn chId (SimpleMethod (Channel_close 200 (fromString "Ok") 0 0))
 
 -- | Create a new 'Channel' value.
 newChannel :: IO Channel
@@ -367,6 +393,7 @@ newChannel = atomically $ do
   assembler <- newTVar newEmptyAssembler
   chanClosed <- newEmptyTMVar
   consumer <- newEmptyTMVar
-  return Channel { getAssembler  = assembler
-                 , getChanClosed = chanClosed
-                 , getConsumer   = consumer }
+  return Channel { getAssembler   = assembler
+                 , getChanClosed  = chanClosed
+                 , getConsumer    = consumer
+                 , getChannelType = ControlChannel }
