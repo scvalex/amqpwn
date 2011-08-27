@@ -7,7 +7,8 @@ import Control.Monad ( replicateM, mapM_ )
 import Data.String ( fromString )
 import Network.AMQP ( Connection, openConnection, closeConnectionNormal
                     , addConnectionClosedHandler
-                    , declareQueue, deleteQueue )
+                    , declareQueue, deleteQueue
+                    , declareExchange, deleteExchange )
 import Network.AMQP.Types ( AMQPException(..) )
 import System.Exit ( exitFailure )
 import System.Posix.Unistd ( sleep )
@@ -72,13 +73,35 @@ tests = test [ "alwaysPass" ~: TestCase $ do
                    handle (\(ChannelClosedException _) -> return ()) $ do
                      deleteQueue conn "test-queue"
                      assertFailure "deleted non-existing queue"
-             , "queueDelete" ~: TestCase $ do
+             , "queueDeleteDeclare" ~: TestCase $ do
                  withConnection $ \conn -> do
                    handle (\(ChannelClosedException _) -> return ()) $ do
                      deleteQueue conn "test-queue"
                      return ()
                    declareQueue conn "test-queue"
                    deleteQueue conn "test-queue"
+                   return ()
+             , "exchangeDeclare" ~: TestCase $ do
+                 withConnection $ \conn -> do
+                   declareExchange conn "test-exchange" "direct" False
+                   return ()
+             , "exchangeDeclareDelete" ~: TestCase $ do
+                 withConnection $ \conn -> do
+                   declareExchange conn "test-exchange" "direct" False
+                   deleteExchange conn "test-exchange"
+                   return ()
+             , "exchangeDelete" ~: TestCase $ do
+                 withConnection $ \conn -> do
+                   handle (\(ChannelClosedException _) -> return ()) $ do
+                     deleteExchange conn "test-exchange"
+                     assertFailure "deleted non-existing exchange"
+             , "exchangeDeleteDeclare" ~: TestCase $ do
+                 withConnection $ \conn -> do
+                   handle (\(ChannelClosedException _) -> return ()) $ do
+                     deleteExchange conn "test-exchange"
+                     return ()
+                   declareExchange conn "test-exchange" "direct" False
+                   deleteExchange conn "test-exchange"
                    return ()
              ]
 
