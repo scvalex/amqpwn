@@ -10,7 +10,12 @@ module Network.AMQP (
 
         -- * Exchange operations
         ExchangeName, ExchangeType,
-        declareExchange, deleteExchange
+        declareExchange, deleteExchange,
+
+        -- * Bindings
+        RoutingKey,
+        bindQueue, unbindQueue,
+        bindExchange, unbindExchange
     ) where
 
 import qualified Data.Map as M
@@ -96,4 +101,59 @@ deleteExchange conn en = do
                          False           -- if-unused
                          False           -- nowait
   let !(SimpleMethod Exchange_delete_ok) = resp
+  return ()
+
+-- | Bind a queue to an exchange with the given routing key.  Throw an
+-- exception on failure.
+bindQueue :: Connection -> QueueName -> ExchangeName -> RoutingKey -> IO ()
+bindQueue conn qn en rk = do
+  resp <- request conn . SimpleMethod $
+         Queue_bind 0               -- ticket
+                    (fromString qn) -- queue name
+                    (fromString en) -- exchange name
+                    (fromString rk) -- routing key
+                    False           -- nowait
+                    (FieldTable (M.fromList []))
+  let !(SimpleMethod Queue_bind_ok) = resp
+  return ()
+
+-- | Unbind a queue from an exchange with the given routing key.
+-- Throw an exception if the binding doesn't exist.
+unbindQueue :: Connection -> QueueName -> ExchangeName -> RoutingKey -> IO ()
+unbindQueue conn qn en rk = do
+  resp <- request conn . SimpleMethod $
+         Queue_unbind 0               -- ticket
+                      (fromString qn) -- queue name
+                      (fromString en) -- exchange name
+                      (fromString rk) -- routing key
+                      (FieldTable (M.fromList []))
+  let !(SimpleMethod Queue_unbind_ok) = resp
+  return ()
+
+-- | Bind an exchange to another exchange with the given routing key.
+-- Throw an exception on failure.
+bindExchange :: Connection -> ExchangeName -> ExchangeName -> RoutingKey -> IO ()
+bindExchange conn en1 en2 rk = do
+  resp <- request conn . SimpleMethod $
+         Exchange_bind 0                -- ticket
+                       (fromString en1) -- name of first exchange
+                       (fromString en2) -- name of second exchange
+                       (fromString rk)  -- routing key
+                       False            -- nowait
+                       (FieldTable (M.fromList []))
+  let !(SimpleMethod Exchange_bind_ok) = resp
+  return ()
+
+-- | Unbind an exchange from another exchange with the given routing
+-- key.  Throw an exception if the binding doesn't exist.
+unbindExchange :: Connection -> ExchangeName -> ExchangeName -> RoutingKey -> IO ()
+unbindExchange conn en1 en2 rk = do
+  resp <- request conn . SimpleMethod $
+         Exchange_unbind 0                -- ticket
+                         (fromString en1) -- name of first exchange
+                         (fromString en2) -- name of second exchange
+                         (fromString rk)  -- routing key
+                         False            -- nowait
+                         (FieldTable (M.fromList []))
+  let !(SimpleMethod Exchange_unbind_ok) = resp
   return ()

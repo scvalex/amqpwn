@@ -9,7 +9,7 @@ module Network.AMQP.Types (
         ChannelId, ChannelType(..),
 
         -- * Convenience types
-        QueueName, ExchangeName, ExchangeType,
+        QueueName, ExchangeName, ExchangeType, RoutingKey,
 
         -- * Message/Envelope
         Method(..), Message(..), newMsg, Envelope(..),
@@ -96,6 +96,9 @@ type ExchangeName = String
 -- datatype here, but since the meaning of the exchange's type is
 -- defined by the broker, we'll just leave it free-form.
 type ExchangeType = String
+
+-- | Routing keys are also 'String's.
+type RoutingKey = String
 
 -- Message/Envelope
 
