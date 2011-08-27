@@ -316,7 +316,7 @@ request conn method = do
   chId <- atomically $ modifyTVar (getLastChannelId conn) (+1)
   ch <- openChannel conn chId
   request' conn ch chId method
---    `CE.finally` closeChannel conn chId
+    `CE.finally` closeChannel conn chId
 
 -- FIXME: Proper error handling.
 request' :: Connection -> Channel -> ChannelId -> Method -> IO Method
@@ -347,12 +347,19 @@ openChannel' :: Connection -> ChannelId -> IO ()
 openChannel' conn chId =
     unsafeWriteMethod conn chId . SimpleMethod $ Channel_open (fromString "")
 
--- | Perform the @channel.close@ and remove the channel from the
--- connection's channel map.
+-- | Remove the channel from the connection's channel map and perform
+-- the @channel.close@.  If the channel is unregistered, assume it's
+-- already been closed.
 closeChannel :: Connection -> ChannelId -> IO ()
 closeChannel conn chId = do
-  closeChannel' conn chId
-  atomically $ modifyTVar (getChannels conn) (\m -> IM.delete chId m)
+  needsClosing <- atomically $ do
+                    chs <- readTVar (getChannels conn)
+                    case IM.lookup chId chs of
+                      Nothing -> return False
+                      Just _  -> do
+                        modifyTVar (getChannels conn) (\m -> IM.delete chId m)
+                        return True
+  when needsClosing $ closeChannel' conn chId
   return ()
 
 -- | Perform the actual @channel.close@ asynchronously.  I.e. don't

@@ -5,14 +5,9 @@ module Network.AMQP.Protocol (
         msgFromContentHeaderProperties, writeFrames, newEmptyAssembler
     ) where
 
-import Control.Concurrent.STM ( atomically
-                              , readTVar
-                              , readTMVar, isEmptyTMVar )
 import qualified Control.Exception as CE
-import Control.Monad ( when )
 import Data.Binary
 import Data.Binary.Get
-import qualified Data.IntMap as IM
 import Data.Binary.Put
 import qualified Data.ByteString.Char8 as BS
 import qualified Data.ByteString.Lazy.Char8 as BL
@@ -78,25 +73,11 @@ writeFrameSock sock x = do
 writeFrames :: Connection -> ChannelId -> [FramePayload] -> IO ()
 writeFrames conn chId payloads = do
   withTMVarIO (getSocket conn) $ \sock -> do
-      atomically ensureChannel
       mapM_ (\payload -> writeFrameSock sock (Frame (fromIntegral chId) payload))
             payloads
       `CE.catch`
       (\(e :: CE.IOException) -> CE.throw . ClientException $
                                   printf "IOException on %d: %s" chId (show e))
-    where
-      ensureChannel = do
-        chs <- readTVar (getChannels conn)
-        case IM.lookup chId chs of
-          Nothing -> CE.throw . ClientException $ printf "Tried to send to \
-                                                        \non-existing channel %d"
-                                                        chId
-          Just ch -> do
-            notClosed <- isEmptyTMVar (getChanClosed ch)
-            when (not notClosed) $ do
-                reason <- readTMVar (getChanClosed ch)
-                CE.throw . ClientException $
-                  printf "Channel %d already closed: '%s'" chId (show reason)
 
 msgFromContentHeaderProperties :: ContentHeaderProperties -> BL.ByteString
                                -> Message
