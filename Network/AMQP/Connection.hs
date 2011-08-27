@@ -251,64 +251,64 @@ addConnectionClosedHandler conn handler = do
 -- opened channels.
 connectionReceiver :: Connection -> Socket -> IO ()
 connectionReceiver conn sock = do
-    (Frame chId payload) <- readFrameSock sock (getMaxFrameSize conn)
-    forwardToChannel (fromIntegral chId) payload
-    connectionReceiver conn sock
-        where
-          -- Forward to channel0.
-          forwardToChannel 0 (MethodPayload Connection_close_ok) = do
-              atomically $ tryPutTMVar (getConnClosed conn)
-                                       (ConnectionClosedException "Normal")
-              killThread =<< myThreadId -- finalize connection will now run
-          forwardToChannel 0 (MethodPayload (Connection_close _ s _ _ )) = do
-              let (ShortString errorMsg) = s
-              atomically $ tryPutTMVar (getConnClosed conn)
-                                       (ConnectionClosedException errorMsg)
-              killThread =<< myThreadId -- finalize connection will now run
-          forwardToChannel 0 msg =
-              CE.throw . ConnectionClosedException $
-                printf "unexpected msg on channel zero: %s" (show msg)
+  (Frame chId payload) <- readFrameSock sock (getMaxFrameSize conn)
+  forwardToChannel (fromIntegral chId) payload
+  connectionReceiver conn sock
+      where
+        -- Forward to channel0.
+        forwardToChannel 0 (MethodPayload Connection_close_ok) = do
+            atomically $ tryPutTMVar (getConnClosed conn)
+                                     (ConnectionClosedException "Normal")
+            killThread =<< myThreadId -- finalize connection will now run
+        forwardToChannel 0 (MethodPayload (Connection_close _ s _ _ )) = do
+            let (ShortString errorMsg) = s
+            atomically $ tryPutTMVar (getConnClosed conn)
+                                     (ConnectionClosedException errorMsg)
+            killThread =<< myThreadId -- finalize connection will now run
+        forwardToChannel 0 msg =
+            CE.throw . ConnectionClosedException $
+              printf "unexpected msg on channel zero: %s" (show msg)
 
-          -- Ignore @channel.close_ok@.  Because we're awesome.
-          forwardToChannel _ (MethodPayload Channel_close_ok) =
-              return ()
-          -- See above.
-          forwardToChannel _ (MethodPayload (Channel_open_ok _)) =
-              return ()
+        -- Ignore @channel.close_ok@.  Because we're awesome.
+        forwardToChannel _ (MethodPayload Channel_close_ok) =
+            return ()
+        -- See above.
+        forwardToChannel _ (MethodPayload (Channel_open_ok _)) =
+            return ()
 
-          -- Forward asynchronous message to other channels.
-          forwardToChannel chId (MethodPayload (Channel_close _ _ _ _)) = do
-              atomically $ do
-                chs <- readTVar (getChannels conn)
-                case IM.lookup chId chs of
-                  Nothing -> return ()
-                  Just ch -> do
-                    when (getChannelType ch == ControlChannel) $ do
-                      putTMVar (getChannelRPC ch) . CE.throw .
-                        ChannelClosedException $ printf "channel %d closed" chId
-              closeChannel conn chId
-          forwardToChannel chId payload = do
-              act <- atomically $ do
-                       channels <- readTVar (getChannels conn)
-                       case IM.lookup chId channels of
-                         Just ch -> return $ processChannelPayload ch payload
-                         Nothing -> return $ CE.throw . ConnectionClosedException $
-                                      printf "channel %d not open" chId
-              act
+        -- Forward asynchronous message to other channels.
+        forwardToChannel chId (MethodPayload (Channel_close _ _ _ _)) = do
+            atomically $ do
+              chs <- readTVar (getChannels conn)
+              case IM.lookup chId chs of
+                Nothing -> return ()
+                Just ch -> do
+                  when (getChannelType ch == ControlChannel) $ do
+                    putTMVar (getChannelRPC ch) . CE.throw .
+                      ChannelClosedException $ printf "channel %d closed" chId
+            closeChannel conn chId
+        forwardToChannel chId payload = do
+            act <- atomically $ do
+                     channels <- readTVar (getChannels conn)
+                     case IM.lookup chId channels of
+                       Just ch -> return $ processChannelPayload ch payload
+                       Nothing -> return $ CE.throw . ConnectionClosedException $
+                                    printf "channel %d not open" chId
+            act
 
-          processChannelPayload ch payload = do
-              mMethod <- atomically $ do
-                                 (Assembler assembler) <- readTVar (getAssembler ch)
-                                 case assembler payload of
-                                   Left assembler' -> do
-                                       writeTVar (getAssembler ch) assembler'
-                                       return Nothing
-                                   Right (method, assembler') -> do
-                                       writeTVar (getAssembler ch) assembler'
-                                       return (Just method)
-              case mMethod of
-                Nothing     -> return ()
-                Just method -> atomically $ putTMVar (getChannelRPC ch) method
+        processChannelPayload ch payload = do
+            mMethod <- atomically $ do
+                               (Assembler assembler) <- readTVar (getAssembler ch)
+                               case assembler payload of
+                                 Left assembler' -> do
+                                     writeTVar (getAssembler ch) assembler'
+                                     return Nothing
+                                 Right (method, assembler') -> do
+                                     writeTVar (getAssembler ch) assembler'
+                                     return (Just method)
+            case mMethod of
+              Nothing     -> return ()
+              Just method -> atomically $ putTMVar (getChannelRPC ch) method
 
 -- | Perform a synchroneous AMQP requst.
 request :: Connection -> Method -> IO Method
