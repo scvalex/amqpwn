@@ -277,7 +277,7 @@ connectionReceiver conn sock = do
             return ()
 
         -- Forward asynchronous message to other channels.
-        forwardToChannel chId (MethodPayload (Channel_close _ _ _ _)) = do
+        forwardToChannel chId (MethodPayload (Channel_close code reason _ _)) = do
             atomically $ do
               chs <- readTVar (getChannels conn)
               case IM.lookup chId chs of
@@ -285,7 +285,8 @@ connectionReceiver conn sock = do
                 Just ch -> do
                   when (getChannelType ch == ControlChannel) $ do
                     putTMVar (getChannelRPC ch) . CE.throw .
-                      ChannelClosedException $ printf "channel %d closed" chId
+                      ChannelClosedException $ printf "channel %d closed: %d '%s'"
+                                                      chId code (show reason)
             closeChannel conn chId
         forwardToChannel chId payload = do
             act <- atomically $ do
