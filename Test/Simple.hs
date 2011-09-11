@@ -2,12 +2,13 @@
 
 import Control.Concurrent ( forkIO, killThread )
 import Control.Concurrent.MVar ( newEmptyMVar, putMVar, takeMVar, tryPutMVar )
-import Control.Exception ( IOException, bracket, finally, handle )
-import Control.Monad ( replicateM, mapM_ )
+import Control.Exception ( IOException, SomeException
+                         , bracket, finally, handle, throw )
+import Control.Monad ( forM, mapM_, replicateM )
 import Data.String ( fromString )
 import Network.AMQP ( Connection, openConnection, closeConnectionNormal
                     , addConnectionClosedHandler
-                    , declareQueue, deleteQueue
+                    , declareQueue, declareAnonQueue, deleteQueue
                     , declareExchange, deleteExchange
                     , bindQueue, unbindQueue
                     , bindExchange, unbindExchange )
@@ -18,7 +19,7 @@ import Test.HUnit
 
 main :: IO ()
 main = do
-  counts <- runTestTT tests
+  counts <- runTestTT $ test [tests, stressTests]
   if (failures counts + errors counts == 0)
      then do
        putStrLn "All tests pass :)"
@@ -118,6 +119,15 @@ tests = test [ "alwaysPass" ~: TestCase $ do
                    handle (\(ChannelClosedException _) -> return ()) $ do
                      unbindQueue conn "test-queue" "amq.direct" ""
                      assertFailure "unbound non-existing queue"
+             , "queueUnbindNonExisting2" ~: TestCase $ do
+                 withConnection $ \conn -> do
+                   handle (\(ChannelClosedException _) -> return ()) $ do
+                     declareQueue conn "test-queue"
+                     (do
+                       unbindQueue conn "test-queue" "amq.direct" ""
+                       assertFailure "unbound non-existing binding")
+                      `finally`
+                        deleteQueue conn "test-queue"
              , "exchangeBindUnbind" ~: TestCase $ do
                  withConnection $ \conn -> do
                    bindExchange conn "amq.fanout" "amq.direct" ""
@@ -127,7 +137,32 @@ tests = test [ "alwaysPass" ~: TestCase $ do
                    handle (\(ChannelClosedException _) -> return ()) $ do
                      unbindExchange conn "no-such-exchange" "amq.direct" ""
                      assertFailure "unbound non-existing exchange"
+             , "exchangeUnbindNonExisting2" ~: TestCase $ do
+                 withConnection $ \conn -> do
+                   handle (\(ChannelClosedException _) -> return ()) $ do
+                     unbindExchange conn "amq.fanout" "amq.direct" "pfft"
+                     assertFailure "unbound non-existing binding"
              ]
+
+stressTests = test [ "manyFailures" ~: TestCase $ do
+                       rs <- replicateM 100 newEmptyMVar
+                       forM (zip rs [0..])
+                            (\(res, i) -> forkIO $ withConnection $ \conn ->
+                               if i `mod` 2 == 0
+                               then do
+                                 handle (\(ChannelClosedException _) -> return ()) $
+                                   bindQueue conn "meh" "amq.direct" "" >>
+                                   putMVar res (assertFailure "unbound meh")
+                                 putMVar res (return ())
+                               else do
+                                 handle (\(e :: SomeException) ->
+                                             putMVar res (throw e)) $ do
+                                   queue <- declareAnonQueue conn
+                                   deleteQueue conn queue
+                                   putMVar res (return ()))
+                       sequence =<< mapM takeMVar rs
+                       return ()
+                   ]
 
 openDefaultConnection :: IO Connection
 openDefaultConnection = openConnection "localhost" 5672 "/" "guest" "guest"

@@ -6,7 +6,7 @@ module Network.AMQP (
 
         -- * Queue operations
         QueueName,
-        declareQueue, declareQueueAnon, deleteQueue,
+        declareQueue, declareAnonQueue, deleteQueue,
 
         -- * Exchange operations
         ExchangeName, ExchangeType,
@@ -35,8 +35,8 @@ declareQueue conn qn = do
 
 -- | Declare an anonymous queue.  Throw an exception on failure.
 -- Return the name of the newly created queue.
-declareQueueAnon :: Connection -> IO QueueName
-declareQueueAnon conn = do
+declareAnonQueue :: Connection -> IO QueueName
+declareAnonQueue conn = do
   (name, _) <- declareQueueInternal conn ""
   return name
 
