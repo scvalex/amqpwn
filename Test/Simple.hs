@@ -2,13 +2,15 @@
 
 import Control.Concurrent ( forkIO, killThread )
 import Control.Concurrent.MVar ( newEmptyMVar, putMVar, takeMVar, tryPutMVar )
-import Control.Exception ( handle, bracket, IOException )
+import Control.Exception ( IOException, bracket, finally, handle )
 import Control.Monad ( replicateM, mapM_ )
 import Data.String ( fromString )
 import Network.AMQP ( Connection, openConnection, closeConnectionNormal
                     , addConnectionClosedHandler
                     , declareQueue, deleteQueue
-                    , declareExchange, deleteExchange )
+                    , declareExchange, deleteExchange
+                    , bindQueue, unbindQueue
+                    , bindExchange, unbindExchange )
 import Network.AMQP.Types ( AMQPException(..) )
 import System.Exit ( exitFailure )
 import System.Posix.Unistd ( sleep )
@@ -103,6 +105,28 @@ tests = test [ "alwaysPass" ~: TestCase $ do
                    declareExchange conn "test-exchange" "direct" False
                    deleteExchange conn "test-exchange"
                    return ()
+             , "queueBindUnbind" ~: TestCase $ do
+                 withConnection $ \conn -> do
+                   declareQueue conn "test-queue"
+                   (do
+                     bindQueue conn "test-queue" "amq.direct" ""
+                     unbindQueue conn "test-queue" "amq.direct" "")
+                    `finally`
+                      deleteQueue conn "test-queue"
+             , "queueUnbindNonExisting" ~: TestCase $ do
+                 withConnection $ \conn -> do
+                   handle (\(ChannelClosedException _) -> return ()) $ do
+                     unbindQueue conn "test-queue" "amq.direct" ""
+                     assertFailure "unbound non-existing queue"
+             , "exchangeBindUnbind" ~: TestCase $ do
+                 withConnection $ \conn -> do
+                   bindExchange conn "amq.fanout" "amq.direct" ""
+                   unbindExchange conn "amq.fanout" "amq.direct" ""
+             , "exchangeUnbindNonExisting" ~: TestCase $ do
+                 withConnection $ \conn -> do
+                   handle (\(ChannelClosedException _) -> return ()) $ do
+                     unbindExchange conn "no-such-exchange" "amq.direct" ""
+                     assertFailure "unbound non-existing exchange"
              ]
 
 openDefaultConnection :: IO Connection
