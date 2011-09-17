@@ -19,14 +19,15 @@ import Test.HUnit
 
 main :: IO ()
 main = do
-  counts <- runTestTT $ test [tests, stressTests]
-  if failures counts + errors counts == 0
+  runCounts <- runTestTT $ test [tests, stressTests]
+  if failures runCounts + errors runCounts == 0
      then
        putStrLn "All tests pass :)"
      else do
        putStrLn "Failures or errors occured :'("
        exitFailure
 
+tests :: Test
 tests = test [ "alwaysPass" ~: TestCase $
                  return ()
              , "connectionOpenClose" ~: TestCase $
@@ -36,7 +37,7 @@ tests = test [ "alwaysPass" ~: TestCase $
                  mapM_ closeConnectionNormal conns
              , "connectionNoServer" ~: TestCase $
                  handle (\(_ :: IOException) -> return ()) $ do
-                     openConnection "localhost" 5600 "/" "guest" "guest"
+                     openConnection "localhost" (5600 :: Int) "/" "guest" "guest"
                      assertFailure "connected to non-existing broker"
              , "connectionWrongLogin" ~: TestCase $
                  handle (\(ConnectionClosedException _) -> return ()) $ do
@@ -134,9 +135,10 @@ tests = test [ "alwaysPass" ~: TestCase $
                      assertFailure "unbound non-existing binding"
              ]
 
+stressTests :: Test
 stressTests = test [ "manyFailures" ~: TestCase $ do
                        rs <- replicateM 100 newEmptyMVar
-                       forM_ (zip rs [0..])
+                       forM_ (zip rs [(0 :: Int)..])
                             (\(res, i) -> forkIO $ withConnection $ \conn ->
                                if i `mod` 2 == 0
                                then do
@@ -155,7 +157,7 @@ stressTests = test [ "manyFailures" ~: TestCase $ do
                    ]
 
 openDefaultConnection :: IO Connection
-openDefaultConnection = openConnection "localhost" 5672 "/" "guest" "guest"
+openDefaultConnection = openConnection "localhost" (5672 :: Int) "/" "guest" "guest"
 
 withConnection :: (Connection -> IO ()) -> IO ()
 withConnection = bracket openDefaultConnection closeConnectionNormal
