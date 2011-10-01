@@ -28,11 +28,10 @@ Source-repository    head
 
 Library
   Build-Depends:      base >= 4, binary, containers, bytestring, network,
-                      template-haskell, stm
+                      template-haskell, stm, mtl, transformers
   Ghc-options:        -Wall -fno-warn-unused-do-bind -fno-warn-incomplete-patterns
   Exposed-modules:    Network.AMQP
   Other-modules:      Network.AMQP.Framing, Network.AMQP.Helpers,
                       Network.AMQP.Protocol, Network.AMQP.FramingTypes,
                       Network.AMQP.Connection, Network.AMQP.Types,
                       Network.AMQP.Types.Internal, Network.AMQP.Framing
-

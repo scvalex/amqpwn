@@ -2,7 +2,7 @@
 
 module Network.AMQP.Protocol (
         methodHasContent, peekFrameSize, readFrameSock, writeFrameSock,
-        msgFromContentHeaderProperties, writeFrames, newEmptyAssembler
+        writeFrames, newEmptyAssembler
     ) where
 
 import qualified Control.Exception as CE
@@ -35,8 +35,8 @@ peekFrameSize = runGet $ do
                   get :: Get ChannelID -- 2 bytes
                   return =<< get      -- 4 bytes
 
-readFrameSock :: Socket -> Int -> IO Frame
-readFrameSock sock _ = do
+readFrameSock :: Socket -> IO Frame
+readFrameSock sock = do
   dat <- recvExact 7
   let len = fromIntegral $ peekFrameSize dat
   dat' <- recvExact (len+1) -- +1 for the terminating 0xCE
@@ -78,18 +78,6 @@ writeFrames conn chId payloads = do
       `CE.catch`
       (\(e :: CE.IOException) -> CE.throw . ClientException $
                                   printf "IOException on %d: %s" chId (show e))
-
-msgFromContentHeaderProperties :: ContentHeaderProperties -> BL.ByteString
-                               -> Message
-msgFromContentHeaderProperties (CHBasic content_type _ _ delivery_mode _ correlation_id reply_to _ message_id timestamp _ _ _ _) myMsgBody =
-    let msgId = fromShortString message_id
-        contentType = fromShortString content_type
-        replyTo = fromShortString reply_to
-        correlationID = fromShortString correlation_id
-    in Message myMsgBody (fmap intToDeliveryMode delivery_mode) timestamp msgId contentType replyTo correlationID
-        where
-          fromShortString (Just (ShortString s)) = Just s
-          fromShortString _ = Nothing
 
 -- | Create a new empty 'Assembler'.
 newEmptyAssembler :: Assembler

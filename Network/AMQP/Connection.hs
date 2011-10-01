@@ -17,8 +17,11 @@ module Network.AMQP.Connection (
         openConnection, addConnectionClosedHandler,
         closeConnection, closeConnectionNormal,
 
-        -- * Conection interal RPC
-        request
+        -- * Conection interal RPC, async
+        request, async,
+
+        -- * Channels (internal)
+        openChannel
     ) where
 
 import Control.Applicative ( (<$>) )
@@ -44,7 +47,7 @@ import Network.AMQP.Types ( Connection(..), Channel(..), Assembler(..)
                           , Frame(..), FramePayload(..)
                           , Method(..), MethodPayload(..)
                           , FieldTable(..), ShortString(..), LongString(..)
-                          , AMQPException(..) )
+                          , AMQPException(..), getClassIdOf )
 import Network.BSD ( getProtocolNumber, getHostByName, hostAddress )
 import Network.Socket ( Socket, socket, Family(..), SocketType(..), connect
                       , SockAddr(..), sClose )
@@ -93,7 +96,7 @@ openConnection host port vhost username password = do
         doConnectionOpen CStarting1 sock frameMax
       doConnectionOpen CStarting1 sock frameMax = do
         -- S: connection.start
-        frame <- readFrameSock sock 4096
+        frame <- readFrameSock sock
         case frame of
           Frame 0 methodPayload ->
               case methodPayload of
@@ -123,7 +126,7 @@ openConnection host port vhost username password = do
         doConnectionOpen CTuning sock frameMax
       doConnectionOpen CTuning sock frameMax = do
         -- S: tune
-        frame <- readFrameSock sock 4096
+        frame <- readFrameSock sock
         case frame of
           (Frame 0 methodPayload) ->
               case methodPayload of
@@ -149,7 +152,7 @@ openConnection host port vhost username password = do
                            (ShortString "")    -- capabilities
                            True                -- insist
         -- S: open_ok
-        frame <- readFrameSock sock frameMax
+        frame <- readFrameSock sock
         case frame of
           Frame 0 methodPayload ->
               case methodPayload of
@@ -169,7 +172,7 @@ openConnection host port vhost username password = do
         myConnChannels <- newTVar IM.empty
         lastChanId <- newTVar 0
         return $ Connection { getSocket            = sockVar
-                            , getMaxFrameSize      = frameMax
+                            , getMaxFrameSize      = fromIntegral frameMax
                             , getConnClosed        = cClosed
                             , getConnCloseHandlers = myConnClosedHandlers
                             , getChannels          = myConnChannels
@@ -251,7 +254,7 @@ addConnectionClosedHandler conn handler = do
 -- opened channels.
 connectionReceiver :: Connection -> Socket -> IO ()
 connectionReceiver conn sock = do
-  (Frame chId payload) <- readFrameSock sock (getMaxFrameSize conn)
+  (Frame chId payload) <- readFrameSock sock
   forwardToChannel (fromIntegral chId) payload
   connectionReceiver conn sock
       where
@@ -311,11 +314,15 @@ connectionReceiver conn sock = do
               Nothing     -> return ()
               Just method -> atomically $ putTMVar (getChannelRPC ch) method
 
--- | Perform a synchroneous AMQP requst.
+-- | Perform an asynchronous AMQP request.
+-- FIXME: Proper error handling.
+async :: Connection -> ChannelId -> Method -> IO ()
+async = unsafeWriteMethod
+
+-- | Perform a synchroneous AMQP request.
 request :: Connection -> Method -> IO Method
 request conn method = do
-  chId <- atomically $ modifyTVar (getLastChannelId conn) (+1)
-  ch <- openChannel conn chId
+  (chId, ch) <- openChannel conn ControlChannel
   request' conn ch chId method
     `CE.finally` closeChannel conn chId
 
@@ -327,20 +334,38 @@ request' conn ch chId method = do
 
 -- | Write a method to the connection.  Does /not/ handle exceptions.
 unsafeWriteMethod :: Connection -> ChannelId -> Method -> IO ()
-unsafeWriteMethod conn chId (SimpleMethod m) = do
+unsafeWriteMethod conn chId (SimpleMethod m) =
     writeFrames conn chId [MethodPayload m]
+unsafeWriteMethod conn chId (ContentMethod m chp content) =
+    let contentFragements = [ MethodPayload m
+                            , ContentHeaderPayload (getClassIdOf chp)
+                                                   0
+                                                   (fromIntegral $
+                                                     BL.length content)
+                                                   chp ] ++
+                            fragment content
+    in writeFrames conn chId contentFragements
+        where
+          fragment s
+              | BL.null s = []
+              | otherwise = let frameMax = getMaxFrameSize conn
+                                (chunk, rest) = BL.splitAt (frameMax - 8) s
+                            in (ContentBodyPayload chunk) : fragment rest
 
 -- | Open a new channel and add it to the connection's channel map.
-openChannel :: Connection -> ChannelId -> IO Channel
-openChannel conn chId = do
-  ch <- newChannel
-  atomically $ modifyTVar (getChannels conn) (\m -> IM.insert chId ch m)
-  openChannel' conn chId
-  return ch
-  `CE.catch` (\(e :: CE.IOException) -> do
-                atomically $ modifyTVar (getChannels conn)
-                                        (\m -> IM.delete chId m)
-                CE.throw e)
+openChannel :: Connection -> ChannelType -> IO (ChannelId, Channel)
+openChannel conn chType = do
+  chId <- atomically $ modifyTVar (getLastChannelId conn) (+1)
+  do
+    ch0 <- newChannel
+    let ch = ch0 { getChannelType = chType }
+    atomically $ modifyTVar (getChannels conn) (\m -> IM.insert chId ch m)
+    openChannel' conn chId
+    return (chId, ch)
+    `CE.catch` (\(e :: CE.IOException) -> do
+                  atomically $ modifyTVar (getChannels conn)
+                                          (\m -> IM.delete chId m)
+                  CE.throw e)
 
 -- | Perform the actual @channel.open@ asynchronously.  I.e. don't
 -- wait for the @channel.open_ok@.

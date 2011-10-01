@@ -15,12 +15,16 @@ module Network.AMQP (
         -- * Bindings
         RoutingKey,
         bindQueue, unbindQueue,
-        bindExchange, unbindExchange
+        bindExchange, unbindExchange,
+
+        -- * Publishing
+        Publisher
     ) where
 
 import qualified Data.Map as M
 import Data.String ( fromString )
 import Network.AMQP.Connection
+import Network.AMQP.Publisher
 import Network.AMQP.Types
 
 -- | Declare a queue with the specified name.  Throw an exception on

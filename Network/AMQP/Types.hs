@@ -11,12 +11,8 @@ module Network.AMQP.Types (
         -- * Convenience types
         QueueName, ExchangeName, ExchangeType, RoutingKey,
 
-        -- * Message/Envelope
-        Method(..), Message(..), newMsg, Envelope(..),
-        DeliveryMode(..), deliveryModeToInt, intToDeliveryMode,
-
         -- * Message payload
-        Frame(..), FramePayload(..),
+        Method(..), Frame(..), FramePayload(..),
 
         -- * AMQP Exceptions
         AMQPException(..)
@@ -28,8 +24,9 @@ import Control.Exception ( Exception )
 import Data.Binary ( Binary(..) )
 import Data.Binary.Get ( Get, getWord8, getLazyByteString )
 import Data.Binary.Put ( Put, runPut, putWord8, putLazyByteString )
-import Data.ByteString.Lazy.Char8 ( ByteString, empty )
+import Data.ByteString.Lazy.Char8 ( ByteString )
 import qualified Data.ByteString.Lazy.Char8 as BL
+import Data.Int ( Int64 )
 import Data.IntMap ( IntMap )
 import Data.Typeable ( Typeable )
 import Network.Socket ( Socket )
@@ -43,7 +40,7 @@ import Network.AMQP.Types.Internal
 data Connection = Connection
     { getSocket :: TMVar Socket
       -- ^ connection socket
-    , getMaxFrameSize :: Int
+    , getMaxFrameSize :: Int64
       -- ^ negotiated maximum frame size
     , getConnClosed :: TMVar AMQPException
       -- ^ reason for closure, if closed
@@ -61,7 +58,7 @@ data Channel = Channel
       -- ^ method assembler
     , getChanClosed :: TMVar AMQPException
       -- ^ reason for closing the channel
-    , getConsumer :: TMVar ((Message, Envelope) -> IO ())
+    , getConsumer :: TMVar (Method -> IO ())
       -- ^ consumer callback
     , getChannelType :: ChannelType
       -- ^ what the channel is used for
@@ -81,7 +78,7 @@ newtype Assembler = Assembler (FramePayload -> Either Assembler (Method, Assembl
 type ChannelId = Int
 
 -- | What is the channel used for?  Control commands?  Publishing?
-data ChannelType = ControlChannel
+data ChannelType = ControlChannel | PublishingChannel
                    deriving ( Eq )
 
 -- Convenience types
@@ -100,53 +97,13 @@ type ExchangeType = String
 -- | Routing keys are also 'String's.
 type RoutingKey = String
 
--- Message/Envelope
+-- Message payload
 
 -- | A Method is a higher-level object consisting of several frames.
 data Method = SimpleMethod MethodPayload
             | ContentMethod MethodPayload ContentHeaderProperties ByteString
               -- ^ method, properties, content-data
               deriving ( Show )
-
--- | An AMQP message
-data Message = Message {
-      msgBody :: ByteString, -- ^ the content of your message
-      msgDeliveryMode :: Maybe DeliveryMode, -- ^ see 'DeliveryMode'
-      msgTimestamp :: Maybe Timestamp, -- ^ use in any way you like; this doesn't affect the way the message is handled
-      msgID :: Maybe String, -- ^ use in any way you like; this doesn't affect the way the message is handled
-      msgContentType :: Maybe String,
-      msgReplyTo :: Maybe String,
-      msgCorrelationID :: Maybe String
-    } deriving ( Show )
-
--- | A new 'Message' with defaults set; you should override at least
--- 'msgBody'.
-newMsg :: Message
-newMsg = Message empty Nothing Nothing Nothing Nothing Nothing Nothing
-
--- | Contains meta-information of a delivered message (through
--- 'getMsg' or 'consumeMsgs').
-data Envelope = Envelope {
-      envDeliveryTag :: LongLongInt,
-      envRedelivered :: Bool,
-      envExchangeName :: String,
-      envRoutingKey :: String,
-      envChannel :: Channel
-    }
-
-data DeliveryMode = Persistent -- ^ the message will survive server restarts (if the queue is durable)
-                  | NonPersistent -- ^ the message may be lost after server restarts
-                    deriving ( Show )
-
-deliveryModeToInt :: (Num a) => DeliveryMode -> a
-deliveryModeToInt NonPersistent = 1
-deliveryModeToInt Persistent = 2
-
-intToDeliveryMode :: (Num a) => a -> DeliveryMode
-intToDeliveryMode 1 = NonPersistent
-intToDeliveryMode 2 = Persistent
-
--- Message payload
 
 -- | A frame received on a channel
 data Frame = Frame ChannelID FramePayload -- ^ channel, payload
@@ -172,7 +129,7 @@ instance Binary Frame where
 data FramePayload = MethodPayload MethodPayload
                   | ContentHeaderPayload ShortInt ShortInt LongLongInt
                                          ContentHeaderProperties
-                  -- ^ classID, weight, bodySize, propertyFields
+                  -- ^ classId, weight, bodySize, propertyFields
                   | ContentBodyPayload BL.ByteString
                     deriving ( Show )
 
