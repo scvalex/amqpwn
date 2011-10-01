@@ -5,7 +5,7 @@ module Network.AMQP.FramingTypes (
         Class(..), Method(..), Field(..), DomainMap,
 
         -- * Code-generation functions
-        genClassIDFuns, genContentHeaderProperties, genMethodPayload,
+        genClassIdFuns, genContentHeaderProperties, genMethodPayload,
         genGetContentHeaderProperties, genPutContentHeaderProperties,
         genMethodPayloadBinaryInstance,
 
@@ -48,14 +48,15 @@ data Field = TypeField String String   -- ^fieldName, fieldType
 -- | Used to map AMQP types to Haskell types.
 type DomainMap = M.Map String String
 
--- | Return the CH* datatype constructor name for the given class
--- name.
-chClassName :: String -> Name
-chClassName name = mkName $ "CH" ++ (fixClassName name)
+-- | Return the CH* datatype constructor name string for the given
+-- class name.
+chClass :: String -> String
+chClass name = "CH" ++ (capitalize name)
 
 -- | Convert an AMQP class name to a Haskell one by capitalizing it.
-fixClassName :: String -> String
-fixClassName s = (toUpper $ head s):(tail s)
+capitalize :: String -> String
+capitalize ""    = ""
+capitalize (c:s) = toUpper c : s
 
 -- | Convert an AMQP method name to a Haskell one by replacing
 -- underscores with dashes.
@@ -92,6 +93,24 @@ mkField _ f (TypeField _ typ) =
 mkField domainMap f df@(DomainField _ _) =
     (NotStrict, f $ ConT $ mkName $ translateType
                          $ fieldType domainMap df)
+
+-- | Make Template Haskell Field of of an AMQP Field.
+mkVarField :: DomainMap -> (Type -> Type) -> String -> Field
+           -> (Name, Strict, Type)
+mkVarField _ f c (TypeField fn typ) =
+    (mkFunName c fn,
+     NotStrict,
+     f . ConT . mkName $ translateType typ)
+mkVarField domainMap f c df@(DomainField fn _) =
+    (mkFunName c fn,
+     NotStrict,
+     f . ConT . mkName $ translateType $ fieldType domainMap df)
+
+mkFunName :: String -> String -> Name
+mkFunName c fn = mkName $
+                 printf "get%s%s" c (concatMap capitalize $ split '-' fn)
+    where
+      split brk = words . map (\x -> if x == brk then ' ' else x)
 
 -- Bits need special handling because AMQP requires contiguous bits to
 -- be packed into a Word8
@@ -144,7 +163,7 @@ condPut _ = return ()
 -- | Make a method name by concatenating the AMQP class and method
 -- names.  This is actually used to name data-type constructors.
 mkMethodName :: String -> String -> String
-mkMethodName cNam nam = printf "%s_%s" (fixClassName cNam) (fixMethodName nam)
+mkMethodName cNam nam = printf "%s_%s" (capitalize cNam) (fixMethodName nam)
 
 -- | Use this to create chains of lambdas and their ilk.
 appAll :: ExpQ -> [ExpQ] -> ExpQ
@@ -157,17 +176,18 @@ genContentHeaderProperties domainMap classes =
                   (map mkConstr classes) [mkName "Show"]]
         where
           mkConstr (Class nam _ _ fields) =
-              NormalC (chClassName nam)
-                      (map (mkField domainMap maybeF) fields)
+              let className = chClass nam
+              in RecC (mkName className)
+                      (map (mkVarField domainMap maybeF className) fields)
           maybeF = AppT (ConT $ mkName "Maybe")
 
--- | Generate the 'getClassIDOf' function.
-genClassIDFuns :: (Monad m) => [Class] -> m [Dec]
-genClassIDFuns classes =
-    return [FunD (mkName "getClassIDOf") (map mkClause classes)]
+-- | Generate the 'getClassIdOf' function.
+genClassIdFuns :: (Monad m) => [Class] -> m [Dec]
+genClassIdFuns classes =
+    return [FunD (mkName "getClassIdOf") (map mkClause classes)]
         where
           mkClause (Class nam index _ _) =
-              Clause [RecP (chClassName nam) []]
+              Clause [RecP (mkName $ chClass nam) []]
                      (NormalB (LitE (IntegerL (fromIntegral index))))
                      []
 
@@ -180,8 +200,9 @@ genMethodPayload domainMap classes =
           mkConstr (Class nam _ methods _) =
               map (mkMethodConstr nam) methods
           mkMethodConstr clsNam (Method nam _ fields) =
-              let fullName = mkName $ mkMethodName clsNam nam
-              in NormalC fullName (map (mkField domainMap id) fields)
+              let mthd = mkMethodName clsNam nam
+              in RecC (mkName mthd)
+                      (map (mkVarField domainMap id mthd) fields)
 
 -- | Generate the 'getContentHeaderProperties' function.
 genGetContentHeaderProperties :: (Quasi m) => [Class] -> m [Dec]
@@ -191,7 +212,7 @@ genGetContentHeaderProperties classes = do
         where
           mkClause (Class nam index _ fields) =
               clause [litP  . integerL $ fromIntegral index]
-                     (mkFunBody (chClassName nam) (length fields))
+                     (mkFunBody (mkName $ chClass nam) (length fields))
                      []
           mkFunBody nam nargs = do
             vs <- replicateM nargs (newName "x")
@@ -216,7 +237,7 @@ genPutContentHeaderProperties classes = do
       where
         mkClause (Class nam _ _ fields) = do
           vs <- replicateM (length fields) (newName "x")
-          clause [conP (chClassName nam) (map varP vs)]
+          clause [conP (mkName $ chClass nam) (map varP vs)]
                  (normalB $ mkFunBody vs)
                  []
         mkFunBody [] = [| putPropBits [] |]

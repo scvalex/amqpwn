@@ -2,7 +2,7 @@
 
 module Network.AMQP.Framing (
         ContentHeaderProperties(..), MethodPayload(..),
-        getClassIDOf, getContentHeaderProperties, putContentHeaderProperties
+        getClassIdOf, getContentHeaderProperties, putContentHeaderProperties
     ) where
 
 import Network.AMQP.FramingData
@@ -13,8 +13,8 @@ import Data.Binary ( Binary(..), Get, Put )
 
 $(genContentHeaderProperties domainMap classes)
 
-$(genClassIDFuns classes)
-getClassIDOf :: (Num a) => ContentHeaderProperties -> a
+$(genClassIdFuns classes)
+getClassIdOf :: (Num a) => ContentHeaderProperties -> a
 
 $(genMethodPayload domainMap classes)
 
