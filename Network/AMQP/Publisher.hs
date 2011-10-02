@@ -33,15 +33,11 @@ instance Monad Publisher where
 instance MonadIO Publisher where
     liftIO x = Publisher $ liftIO x
 
-instance MonadState PState Publisher where
-    get = Publisher $ get
-    put = Publisher . put
-
 -- | Publish a message to the given exchange with the routing key set.
 -- A unique message sequence number is returned (see Publisher
 -- Confirms for details).
 publish :: ExchangeName -> RoutingKey -> BL.ByteString -> Publisher Int
-publish x rk content = do
+publish x rk content = Publisher $ do
   state@(PState { getConnection = conn,
                   getChannelId = chId,
                   getMsgSeqNo = msn }) <- get
