@@ -19,6 +19,7 @@ module Network.AMQP.Types (
     ) where
 
 import Control.Applicative ( Applicative(..), (<$>) )
+import Control.Concurrent ( ThreadId )
 import Control.Concurrent.STM ( TVar, TMVar )
 import Control.Exception ( Exception )
 import Data.Binary ( Binary(..) )
@@ -78,7 +79,7 @@ newtype Assembler = Assembler (FramePayload -> Either Assembler (Method, Assembl
 type ChannelId = Int
 
 -- | What is the channel used for?  Control commands?  Publishing?
-data ChannelType = ControlChannel | PublishingChannel
+data ChannelType = ControlChannel | PublishingChannel ThreadId
                    deriving ( Eq )
 
 -- Convenience types

@@ -9,6 +9,8 @@ module Network.AMQP.Publisher (
     ) where
 
 import Control.Concurrent ( ThreadId, forkIO )
+import Control.Concurrent.STM ( atomically
+                              , newEmptyTMVar, takeTMVar, putTMVar )
 import qualified Control.Exception as CE
 import Control.Monad.IO.Class ( MonadIO(..) )
 import Control.Monad.State.Lazy ( MonadState(..), StateT(..), evalStateT )
@@ -51,11 +53,20 @@ publish x rk content = Publisher $ do
   put $ state { getMsgSeqNo = msn + 1 }
   return msn
 
+-- | Runs the given publisher on a dedicated thread.
 runPublisher :: Connection -> Publisher () -> IO ThreadId
 runPublisher conn pub = do
-  (chId, _) <- openChannel conn PublishingChannel
-  let state = PState { getConnection = conn
-                     , getChannelId  = chId
-                     , getMsgSeqNo   = 1 }
-  forkIO (evalStateT (unPublisher pub) state
-          `CE.finally` closeChannel conn chId)
+  chIdTV <- atomically $ newEmptyTMVar
+  tid <- forkIO $ publisherPrelaunch chIdTV
+  (chId, _) <- openChannel conn (PublishingChannel tid)
+  atomically $ putTMVar chIdTV chId
+  return tid
+    where
+      publisherPrelaunch chIdTV = do
+        chId <- atomically $ takeTMVar chIdTV
+        let state = PState { getConnection = conn
+                           , getChannelId  = chId
+                           , getMsgSeqNo   = 1 }
+        forkIO (evalStateT (unPublisher pub) state
+                `CE.finally` closeChannel conn chId)
+        return ()
