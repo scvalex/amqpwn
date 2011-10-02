@@ -1,8 +1,8 @@
-{-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE MultiParamTypeClasses, ScopedTypeVariables #-}
 
 module Network.AMQP.Publisher (
         -- * Opaque publisher type
-        Publisher, runPublisher,
+        Publisher, runPublisher, runPublisherBracket,
 
         -- * Publishing methods
         publish, waitForConfirms
@@ -57,20 +57,36 @@ publish x rk content = Publisher $ do
 waitForConfirms :: Publisher (S.Set MessageId)
 waitForConfirms = undefined
 
--- | Runs the given publisher on a dedicated thread.
+-- | Run the given publisher on a dedicated thread.
 runPublisher :: Connection -> Publisher () -> IO ThreadId
-runPublisher conn pub = do
+runPublisher conn pub =
+    runPublisherBracket conn (return ()) (\_ -> return ())
+                        (\(_ :: CE.SomeException) -> return ()) (\_ -> pub)
+
+-- | Run the given publisher o a dedicated thread, bracketed by the
+-- given actions.
+runPublisherBracket :: (CE.Exception e)
+                    => Connection
+                    -> IO a               -- ^ the action to run first
+                    -> (a -> IO ())        -- ^ the action to run last
+                    -> (e -> IO ())        -- ^ handler to invoke if a
+                                         -- exception is raised
+                    -> (a -> Publisher ()) -- ^ the action to run in-between
+                    -> IO ThreadId
+runPublisherBracket conn acquire release handler pub = do
   chIdTV <- atomically $ newEmptyTMVar
-  tid <- forkIO $ publisherPrelaunch chIdTV
+  source <- acquire
+  tid <- forkIO $ publisherPrelaunch chIdTV source
   (chId, _) <- openChannel conn (PublishingChannel tid)
   atomically $ putTMVar chIdTV chId
   return tid
     where
-      publisherPrelaunch chIdTV = do
+      publisherPrelaunch chIdTV source = do
         chId <- atomically $ takeTMVar chIdTV
         let state = PState { getConnection = conn
                            , getChannelId  = chId
                            , getMsgSeqNo   = 1 }
-        forkIO (evalStateT (unPublisher pub) state
-                `CE.finally` closeChannel conn chId)
+        evalStateT (unPublisher (pub source)) state
+           `CE.catch` handler
+           `CE.finally` (closeChannel conn chId >> release source)
         return ()

@@ -128,6 +128,32 @@ tests = test [ "alwaysPass" ~: TestCase $
                  withConnection $ \conn -> do
                      runPublisher conn $ publish "" "bah" "meh" >> return ()
                      return ()
+             , "justPublish2" ~: TestCase $
+                 withConnection $ \conn -> do
+                     waiter <- newEmptyMVar
+                     runPublisherBracket conn
+                                         (return ())
+                                         (\_ -> putMVar waiter (return ()))
+                                         (\(e :: CE.SomeException) ->
+                                              putMVar waiter (CE.throw e)) $ \_ -> do
+                       publish "" "bah" "meh" >> return ()
+                     act <- takeMVar waiter
+                     act
+             , "justPublishBad" ~: TestCase $
+                 withConnection $ \conn -> do
+                     waiter <- newEmptyMVar
+                     runPublisherBracket conn
+                                         (return ())
+                                         (\_ -> return ())
+                                         (\(e :: CE.SomeException) ->
+                                              putMVar waiter (Left e)) $ \_ -> do
+                       publish "ni" "bah" "meh"
+                       liftIO $ sleep 1 >> putMVar waiter (Right ())
+                     res <- takeMVar waiter
+                     case res of
+                       Left _  -> return ()
+                       Right () -> assertFailure "succesfully published to \
+                                                \non-existing exchange"
              ]
 
 stressTests :: Test

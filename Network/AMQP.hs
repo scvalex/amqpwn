@@ -18,7 +18,7 @@ module Network.AMQP (
         bindExchange, unbindExchange,
 
         -- * Publishing
-        Publisher, runPublisher, publish
+        Publisher, runPublisher, runPublisherBracket, publish
     ) where
 
 import qualified Data.Map as M
