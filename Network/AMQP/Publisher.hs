@@ -2,18 +2,19 @@
 
 module Network.AMQP.Publisher (
         -- * Opaque publisher type
-        Publisher, newPublisher,
+        Publisher, runPublisher,
 
         -- * Publishing methods
         publish
     ) where
 
 import Control.Concurrent ( ThreadId, forkIO )
+import qualified Control.Exception as CE
 import Control.Monad.IO.Class ( MonadIO(..) )
 import Control.Monad.State.Lazy ( MonadState(..), StateT, evalStateT )
 import qualified Data.ByteString.Lazy.Char8 as BL
 import Data.String ( IsString(..) )
-import Network.AMQP.Connection ( openChannel, async )
+import Network.AMQP.Connection ( openChannel, closeChannel, async )
 import Network.AMQP.Types ( Connection, ChannelId, ChannelType(..)
                           , ExchangeName, RoutingKey
                           , Method(..), MethodPayload(..)
@@ -43,10 +44,10 @@ publish x rk content = do
   put $ state { getMsgSeqNo = msn + 1 }
   return msn
 
-newPublisher :: Connection -> Publisher () -> IO ThreadId
-newPublisher conn pub = do
+runPublisher :: Connection -> Publisher () -> IO ThreadId
+runPublisher conn pub = do
   (chId, _) <- openChannel conn PublishingChannel
   let state = PState { getConnection = conn
                      , getChannelId  = chId
                      , getMsgSeqNo   = 1 }
-  forkIO $ evalStateT pub state
+  forkIO (evalStateT pub state `CE.finally` closeChannel conn chId)

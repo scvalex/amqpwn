@@ -21,7 +21,7 @@ module Network.AMQP.Connection (
         request, async,
 
         -- * Channels (internal)
-        openChannel
+        openChannel, closeChannel
     ) where
 
 import Control.Applicative ( (<$>) )
