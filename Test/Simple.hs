@@ -1,17 +1,11 @@
-{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE ScopedTypeVariables, OverloadedStrings #-}
 
-import Control.Concurrent ( forkIO, killThread )
+import Control.Concurrent ( ThreadId, forkIO, killThread )
 import Control.Concurrent.MVar ( newEmptyMVar, putMVar, takeMVar, tryPutMVar )
-import Control.Exception ( IOException, SomeException
-                         , bracket, finally, handle, throw )
-import Control.Monad ( forM_, mapM_, replicateM )
-import Data.String ( fromString )
-import Network.AMQP ( Connection, openConnection, closeConnectionNormal
-                    , addConnectionClosedHandler
-                    , declareQueue, declareAnonQueue, deleteQueue
-                    , declareExchange, deleteExchange
-                    , bindQueue, unbindQueue
-                    , bindExchange, unbindExchange )
+import qualified Control.Exception as CE
+import Control.Monad ( forM_, replicateM )
+import Control.Monad.IO.Class ( MonadIO(..) )
+import Network.AMQP
 import Network.AMQP.Types ( AMQPException(..) )
 import System.Exit ( exitFailure )
 import System.Posix.Unistd ( sleep )
@@ -36,11 +30,11 @@ tests = test [ "alwaysPass" ~: TestCase $
                  conns <- replicateM 10 openDefaultConnection
                  mapM_ closeConnectionNormal conns
              , "connectionNoServer" ~: TestCase $
-                 handle (\(_ :: IOException) -> return ()) $ do
+                 CE.handle (\(_ :: CE.IOException) -> return ()) $ do
                      openConnection "localhost" (5600 :: Int) "/" "guest" "guest"
                      assertFailure "connected to non-existing broker"
              , "connectionWrongLogin" ~: TestCase $
-                 handle (\(ConnectionClosedException _) -> return ()) $ do
+                 CE.handle (\(ConnectionClosedException _) -> return ()) $ do
                      openConnection "localhost" 5672 "/" "guest" "geust"
                      assertFailure "connected with wrong password"
              , "connectionCloseHandler" ~: TestCase $ do
@@ -48,10 +42,7 @@ tests = test [ "alwaysPass" ~: TestCase $
                  m <- newEmptyMVar
                  addConnectionClosedHandler conn (putMVar m . Right)
                  closeConnectionNormal conn
-                 tid <- forkIO $ do
-                         sleep 1
-                         tryPutMVar m (Left "timeout")
-                         return ()
+                 tid <- timeout 1 $ tryPutMVar m (Left "timeout")
                  v <- takeMVar m
                  case v of
                    Left err ->
@@ -71,12 +62,12 @@ tests = test [ "alwaysPass" ~: TestCase $
                  withConnection simpleQueueOp
              , "queueDelete" ~: TestCase $
                  withConnection $ \conn ->
-                   handle (\(ChannelClosedException _) -> return ()) $ do
+                   CE.handle (\(ChannelClosedException _) -> return ()) $ do
                      deleteQueue conn "test-queue"
                      assertFailure "deleted non-existing queue"
              , "queueDeleteDeclare" ~: TestCase $
                  withConnection $ \conn -> do
-                   handle (\(ChannelClosedException _) -> return ()) $ do
+                   CE.handle (\(ChannelClosedException _) -> return ()) $ do
                      deleteQueue conn "test-queue"
                      return ()
                    simpleQueueOp conn
@@ -88,12 +79,12 @@ tests = test [ "alwaysPass" ~: TestCase $
                  withConnection simpleExchgOp
              , "exchangeDelete" ~: TestCase $
                  withConnection $ \conn ->
-                   handle (\(ChannelClosedException _) -> return ()) $ do
+                   CE.handle (\(ChannelClosedException _) -> return ()) $ do
                      deleteExchange conn "test-exchange"
                      assertFailure "deleted non-existing exchange"
              , "exchangeDeleteDeclare" ~: TestCase $
                  withConnection $ \conn -> do
-                   handle (\(ChannelClosedException _) -> return ()) $ do
+                   CE.handle (\(ChannelClosedException _) -> return ()) $ do
                      deleteExchange conn "test-exchange"
                      return ()
                    simpleExchgOp conn
@@ -103,21 +94,21 @@ tests = test [ "alwaysPass" ~: TestCase $
                    (do
                      bindQueue conn "test-queue" "amq.direct" ""
                      unbindQueue conn "test-queue" "amq.direct" "")
-                    `finally`
+                    `CE.finally`
                       deleteQueue conn "test-queue"
              , "queueUnbindNonExisting" ~: TestCase $
                  withConnection $ \conn ->
-                   handle (\(ChannelClosedException _) -> return ()) $ do
+                   CE.handle (\(ChannelClosedException _) -> return ()) $ do
                      unbindQueue conn "test-queue" "amq.direct" ""
                      assertFailure "unbound non-existing queue"
              , "queueUnbindNonExisting2" ~: TestCase $
                  withConnection $ \conn ->
-                   handle (\(ChannelClosedException _) -> return ()) $ do
+                   CE.handle (\(ChannelClosedException _) -> return ()) $ do
                      declareQueue conn "test-queue"
                      (do
                        unbindQueue conn "test-queue" "amq.direct" ""
                        assertFailure "unbound non-existing binding")
-                      `finally`
+                      `CE.finally`
                         deleteQueue conn "test-queue"
              , "exchangeBindUnbind" ~: TestCase $
                  withConnection $ \conn -> do
@@ -125,14 +116,18 @@ tests = test [ "alwaysPass" ~: TestCase $
                    unbindExchange conn "amq.fanout" "amq.direct" ""
              , "exchangeUnbindNonExisting" ~: TestCase $
                  withConnection $ \conn ->
-                   handle (\(ChannelClosedException _) -> return ()) $ do
+                   CE.handle (\(ChannelClosedException _) -> return ()) $ do
                      unbindExchange conn "no-such-exchange" "amq.direct" ""
                      assertFailure "unbound non-existing exchange"
              , "exchangeUnbindNonExisting2" ~: TestCase $
                  withConnection $ \conn ->
-                   handle (\(ChannelClosedException _) -> return ()) $ do
+                   CE.handle (\(ChannelClosedException _) -> return ()) $ do
                      unbindExchange conn "amq.fanout" "amq.direct" "pfft"
                      assertFailure "unbound non-existing binding"
+             , "justPublish" ~: TestCase $
+                 withConnection $ \conn -> do
+                     runPublisher conn $ publish "" "bah" "meh" >> return ()
+                     return ()
              ]
 
 stressTests :: Test
@@ -142,13 +137,14 @@ stressTests = test [ "manyFailures" ~: TestCase $ do
                             (\(res, i) -> forkIO $ withConnection $ \conn ->
                                if i `mod` 2 == 0
                                then do
-                                 handle (\(ChannelClosedException _) -> return ()) $
+                                 CE.handle (\(ChannelClosedException _) ->
+                                                return ()) $
                                    bindQueue conn "meh" "amq.direct" "" >>
                                    putMVar res (assertFailure "unbound meh")
                                  putMVar res (return ())
                                else
-                                 handle (\(e :: SomeException) ->
-                                             putMVar res (throw e)) $ do
+                                 CE.handle (\(e :: CE.SomeException) ->
+                                             putMVar res (CE.throw e)) $ do
                                    queue <- declareAnonQueue conn
                                    deleteQueue conn queue
                                    putMVar res (return ()))
@@ -160,7 +156,7 @@ openDefaultConnection :: IO Connection
 openDefaultConnection = openConnection "localhost" (5672 :: Int) "/" "guest" "guest"
 
 withConnection :: (Connection -> IO ()) -> IO ()
-withConnection = bracket openDefaultConnection closeConnectionNormal
+withConnection = CE.bracket openDefaultConnection closeConnectionNormal
 
 simpleQueueOp :: Connection -> IO ()
 simpleQueueOp conn = do
@@ -173,3 +169,9 @@ simpleExchgOp conn = do
   declareExchange conn "test-exchange" "direct" False
   deleteExchange conn "test-exchange"
   return ()
+
+timeout :: Int -> IO a -> IO ThreadId
+timeout interval act = forkIO $ do
+                         sleep interval
+                         act
+                         return ()

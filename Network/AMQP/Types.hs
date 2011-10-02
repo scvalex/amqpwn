@@ -9,7 +9,7 @@ module Network.AMQP.Types (
         ChannelId, ChannelType(..),
 
         -- * Convenience types
-        QueueName, ExchangeName, ExchangeType, RoutingKey,
+        QueueName, ExchangeName, ExchangeType, RoutingKey, MessageId,
 
         -- * Message payload
         Method(..), Frame(..), FramePayload(..),
@@ -97,6 +97,9 @@ type ExchangeType = String
 
 -- | Routing keys are also 'String's.
 type RoutingKey = String
+
+-- | Message ids are just plain 'Int's.
+type MessageId = Int
 
 -- Message payload
 

@@ -5,7 +5,7 @@ module Network.AMQP.Publisher (
         Publisher, runPublisher,
 
         -- * Publishing methods
-        publish
+        publish, waitForConfirms
     ) where
 
 import Control.Concurrent ( ThreadId, forkIO )
@@ -15,10 +15,11 @@ import qualified Control.Exception as CE
 import Control.Monad.IO.Class ( MonadIO(..) )
 import Control.Monad.State.Lazy ( MonadState(..), StateT(..), evalStateT )
 import qualified Data.ByteString.Lazy.Char8 as BL
+import qualified Data.Set as S
 import Data.String ( IsString(..) )
 import Network.AMQP.Connection ( openChannel, closeChannel, async )
 import Network.AMQP.Types ( Connection, ChannelId, ChannelType(..)
-                          , ExchangeName, RoutingKey
+                          , ExchangeName, RoutingKey, MessageId
                           , Method(..), MethodPayload(..)
                           , ContentHeaderProperties(..) )
 
@@ -36,9 +37,9 @@ instance MonadIO Publisher where
     liftIO x = Publisher $ liftIO x
 
 -- | Publish a message to the given exchange with the routing key set.
--- A unique message sequence number is returned (see Publisher
+-- A unique (for this publisher) message id is returned (see Publisher
 -- Confirms for details).
-publish :: ExchangeName -> RoutingKey -> BL.ByteString -> Publisher Int
+publish :: ExchangeName -> RoutingKey -> BL.ByteString -> Publisher MessageId
 publish x rk content = Publisher $ do
   state@(PState { getConnection = conn,
                   getChannelId = chId,
@@ -52,6 +53,9 @@ publish x rk content = Publisher $ do
                           content
   put $ state { getMsgSeqNo = msn + 1 }
   return msn
+
+waitForConfirms :: Publisher (S.Set MessageId)
+waitForConfirms = undefined
 
 -- | Runs the given publisher on a dedicated thread.
 runPublisher :: Connection -> Publisher () -> IO ThreadId
