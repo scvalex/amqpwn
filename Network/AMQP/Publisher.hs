@@ -11,7 +11,7 @@ module Network.AMQP.Publisher (
 import Control.Concurrent ( ThreadId, forkIO )
 import qualified Control.Exception as CE
 import Control.Monad.IO.Class ( MonadIO(..) )
-import Control.Monad.State.Lazy ( MonadState(..), StateT, evalStateT )
+import Control.Monad.State.Lazy ( MonadState(..), StateT(..), evalStateT )
 import qualified Data.ByteString.Lazy.Char8 as BL
 import Data.String ( IsString(..) )
 import Network.AMQP.Connection ( openChannel, closeChannel, async )
@@ -24,7 +24,18 @@ data PState = PState { getConnection :: Connection
                      , getChannelId  :: ChannelId
                      , getMsgSeqNo   :: Int }
 
-type Publisher a = StateT PState IO a
+newtype Publisher a = Publisher { unPublisher :: StateT PState IO a }
+
+instance Monad Publisher where
+    return = Publisher . return
+    x >>= f = Publisher $ unPublisher x >>= (unPublisher . f)
+
+instance MonadIO Publisher where
+    liftIO x = Publisher $ liftIO x
+
+instance MonadState PState Publisher where
+    get = Publisher $ get
+    put = Publisher . put
 
 -- | Publish a message to the given exchange with the routing key set.
 -- A unique message sequence number is returned (see Publisher
@@ -50,4 +61,5 @@ runPublisher conn pub = do
   let state = PState { getConnection = conn
                      , getChannelId  = chId
                      , getMsgSeqNo   = 1 }
-  forkIO (evalStateT pub state `CE.finally` closeChannel conn chId)
+  forkIO (evalStateT (unPublisher pub) state
+          `CE.finally` closeChannel conn chId)
