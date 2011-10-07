@@ -1,17 +1,15 @@
 {-# LANGUAGE ScopedTypeVariables, OverloadedStrings #-}
 
-import Control.Concurrent ( ThreadId, myThreadId, forkIO, killThread )
+import Control.Concurrent ( ThreadId, forkIO, killThread )
 import Control.Concurrent.MVar ( newEmptyMVar, putMVar, takeMVar, tryPutMVar
                                , readMVar )
 import qualified Control.Exception as CE
 import Control.Monad ( forM_, replicateM )
 import Control.Monad.IO.Class ( MonadIO(..) )
-import Network.AMQP
-import Network.AMQP.Types ( AMQPException(..) )
+import Network.Messaging
 import System.Exit ( exitFailure )
 import System.Posix.Unistd ( sleep )
 import Test.HUnit
-import Text.Printf ( printf )
 
 main :: IO ()
 main = do

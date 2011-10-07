@@ -1,6 +1,6 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 
-module Network.AMQP.Protocol (
+module Network.Messaging.AMQP.Protocol (
         methodHasContent, peekFrameSize, readFrameSock, writeFrameSock,
         writeFrames, newEmptyAssembler
     ) where
@@ -11,9 +11,9 @@ import Data.Binary.Get
 import Data.Binary.Put
 import qualified Data.ByteString.Char8 as BS
 import qualified Data.ByteString.Lazy.Char8 as BL
-import Network.AMQP.Helpers ( toLazy, toStrict, withTMVarIO )
-import Network.AMQP.Framing
-import Network.AMQP.Types
+import Network.Messaging.Helpers ( toLazy, toStrict, withTMVarIO )
+import Network.Messaging.AMQP.Framing
+import Network.Messaging.AMQP.Types
 import Network.Socket ( Socket )
 import qualified Network.Socket.ByteString as NB
 import Text.Printf ( printf )

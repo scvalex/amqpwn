@@ -7,7 +7,7 @@ import qualified Data.List as L
 import qualified Data.Map as M
 import Data.Maybe
 
-import Network.AMQP.FramingTypes
+import Network.Messaging.AMQP.FramingTypes
 
 import System.Environment ( getArgs )
 
@@ -38,9 +38,9 @@ run specFn = do
   return $ L.intercalate "\n"
          [ "-- WARNING: Auto-generated file. Do not edit."
          , ""
-         , "module Network.AMQP.FramingData where"
+         , "module Network.Messaging.AMQP.FramingData where"
          , ""
-         , "import Network.AMQP.FramingTypes"
+         , "import Network.Messaging.AMQP.FramingTypes"
          , "import Data.Map ( fromList )"
          , ""
          , "classes :: [Class]"

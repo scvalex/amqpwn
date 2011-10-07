@@ -1,8 +1,8 @@
 {-# LANGUAGE DeriveDataTypeable #-}
 
-module Network.AMQP.Types (
-        module Network.AMQP.Types.Internal,
-        module Network.AMQP.Framing,
+module Network.Messaging.AMQP.Types (
+        module Network.Messaging.AMQP.Types.Internal,
+        module Network.Messaging.AMQP.Framing,
 
         -- * AMQP high-level types
         Connection(..), Channel(..), Assembler(..),
@@ -31,8 +31,8 @@ import Data.Int ( Int64 )
 import Data.IntMap ( IntMap )
 import Data.Typeable ( Typeable )
 import Network.Socket ( Socket )
-import Network.AMQP.Framing
-import Network.AMQP.Types.Internal
+import Network.Messaging.AMQP.Framing
+import Network.Messaging.AMQP.Types.Internal
 
 
 -- High-level types

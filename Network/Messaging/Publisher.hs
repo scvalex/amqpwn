@@ -1,6 +1,6 @@
 {-# LANGUAGE MultiParamTypeClasses, ScopedTypeVariables #-}
 
-module Network.AMQP.Publisher (
+module Network.Messaging.Publisher (
         -- * The Publisher monad
         Publisher, runPublisher,
 
@@ -15,11 +15,12 @@ import Control.Monad.State.Lazy ( MonadState(..), StateT(..), evalStateT )
 import qualified Data.ByteString.Lazy.Char8 as BL
 import qualified Data.Set as S
 import Data.String ( IsString(..) )
-import Network.AMQP.Connection ( openChannel, closeChannel, request, async )
-import Network.AMQP.Types ( Connection, ChannelId, ChannelType(..)
-                          , ExchangeName, RoutingKey, MessageId
-                          , Method(..), MethodPayload(..)
-                          , ContentHeaderProperties(..) )
+import Network.Messaging.AMQP.Connection ( openChannel, closeChannel
+                                         , request, async )
+import Network.Messaging.AMQP.Types ( Connection, ChannelId, ChannelType(..)
+                                    , ExchangeName, RoutingKey, MessageId
+                                    , Method(..), MethodPayload(..)
+                                    , ContentHeaderProperties(..) )
 
 data PState = PState { getConnection :: Connection
                      , getChannelId  :: ChannelId

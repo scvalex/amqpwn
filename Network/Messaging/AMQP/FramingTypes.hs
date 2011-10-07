@@ -1,6 +1,6 @@
 {-# LANGUAGE TemplateHaskell #-}
 
-module Network.AMQP.FramingTypes (
+module Network.Messaging.AMQP.FramingTypes (
         -- * Codegen XML types
         Class(..), Method(..), Field(..), DomainMap,
 
@@ -25,7 +25,7 @@ import Data.Maybe ( isJust )
 import Data.Word ( Word8, Word16 )
 import Language.Haskell.TH
 import Language.Haskell.TH.Syntax ( Quasi )
-import Network.AMQP.Types.Internal ( Bit )
+import Network.Messaging.AMQP.Types.Internal ( Bit )
 import Text.Printf ( printf )
 
 -- Codegen XML types

@@ -1,13 +1,13 @@
 {-# LANGUAGE TemplateHaskell #-}
 
-module Network.AMQP.Framing (
+module Network.Messaging.AMQP.Framing (
         ContentHeaderProperties(..), MethodPayload(..),
         getClassIdOf, getContentHeaderProperties, putContentHeaderProperties
     ) where
 
-import Network.AMQP.FramingData
-import Network.AMQP.FramingTypes
-import Network.AMQP.Types.Internal
+import Network.Messaging.AMQP.FramingData
+import Network.Messaging.AMQP.FramingTypes
+import Network.Messaging.AMQP.Types.Internal
 
 import Data.Binary ( Binary(..), Get, Put )
 

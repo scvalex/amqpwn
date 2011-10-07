@@ -19,7 +19,7 @@ myHooks = simpleUserHooks {
           }
 
 framingDataFile, amqpSpecFile, codegenFile :: FilePath
-framingDataFile = "Network/AMQP/FramingData.hs"
+framingDataFile = "Network/Messaging/AMQP/FramingData.hs"
 amqpSpecFile = "Codegen/amqp0-9-1.xml"
 codegenFile = "Codegen/Codegen.hs"
 

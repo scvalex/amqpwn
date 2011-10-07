@@ -30,8 +30,13 @@ Library
   Build-Depends:      base >= 4, binary, containers, bytestring, network,
                       template-haskell, stm, mtl, transformers
   Ghc-options:        -Wall -fno-warn-unused-do-bind -fno-warn-incomplete-patterns
-  Exposed-modules:    Network.AMQP
-  Other-modules:      Network.AMQP.Framing, Network.AMQP.Helpers,
-                      Network.AMQP.Protocol, Network.AMQP.FramingTypes,
-                      Network.AMQP.Connection, Network.AMQP.Types,
-                      Network.AMQP.Types.Internal, Network.AMQP.Framing
+  Exposed-modules:    Network.Messaging
+  Other-modules:      Network.Messaging.AMQP.Framing,
+                      Network.Messaging.AMQP.Protocol,
+                      Network.Messaging.AMQP.FramingTypes,
+                      Network.Messaging.AMQP.Connection,
+                      Network.Messaging.AMQP.Types,
+                      Network.Messaging.AMQP.Types.Internal,
+                      Network.Messaging.AMQP.Framing,
+                      Network.Messaging.Helpers,
+                      Network.Messaging.Publisher

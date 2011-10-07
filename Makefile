@@ -1,4 +1,4 @@
-FRAMING_DATA := Network/AMQP/FramingData.hs
+FRAMING_DATA := Network/Messaging/AMQP/FramingData.hs
 
 all: build
 

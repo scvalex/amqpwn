@@ -1,4 +1,4 @@
-module Network.AMQP (
+module Network.Messaging (
         -- * Connections
         Connection,
         openConnection, closeConnection, closeConnectionNormal,
@@ -18,14 +18,17 @@ module Network.AMQP (
         bindExchange, unbindExchange,
 
         -- * Publishing
-        Publisher, runPublisher, publish
+        Publisher, runPublisher, publish,
+
+        -- * Exceptions
+        AMQPException(..)
     ) where
 
 import qualified Data.Map as M
 import Data.String ( fromString )
-import Network.AMQP.Connection
-import Network.AMQP.Publisher
-import Network.AMQP.Types
+import Network.Messaging.AMQP.Connection
+import Network.Messaging.Publisher
+import Network.Messaging.AMQP.Types
 
 -- | Declare a queue with the specified name.  Throw an exception on
 -- failure.  Applications of this function are idempotent

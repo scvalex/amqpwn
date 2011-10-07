@@ -12,7 +12,7 @@
 --
 -- Outgoing Data: Application -> Command Queue -> Socket
 
-module Network.AMQP.Connection (
+module Network.Messaging.AMQP.Connection (
         -- * Opening and closing connections
         openConnection, addConnectionClosedHandler,
         closeConnection, closeConnectionNormal,
@@ -39,15 +39,17 @@ import qualified Data.ByteString.Lazy.Char8 as BL
 import qualified Data.IntMap as IM
 import qualified Data.Map as M
 import Data.String ( IsString(..) )
-import Network.AMQP.Protocol ( readFrameSock, writeFrameSock, writeFrames
-                             , newEmptyAssembler )
-import Network.AMQP.Helpers ( toStrict, modifyTVar, withTMVarIO )
-import Network.AMQP.Types ( Connection(..), Channel(..), Assembler(..)
-                          , ChannelId, ChannelType(..)
-                          , Frame(..), FramePayload(..)
-                          , Method(..), MethodPayload(..)
-                          , FieldTable(..), ShortString(..), LongString(..)
-                          , AMQPException(..), getClassIdOf )
+import Network.Messaging.AMQP.Protocol ( readFrameSock, writeFrameSock
+                                       , writeFrames
+                                       , newEmptyAssembler )
+import Network.Messaging.Helpers ( toStrict, modifyTVar, withTMVarIO )
+import Network.Messaging.AMQP.Types ( Connection(..), Channel(..)
+                                    , Assembler(..), ChannelId
+                                    , ChannelType(..), Frame(..)
+                                    , FramePayload(..), Method(..)
+                                    , MethodPayload(..), FieldTable(..)
+                                    , ShortString(..), LongString(..)
+                                    , AMQPException(..), getClassIdOf )
 import Network.BSD ( getProtocolNumber, getHostByName, hostAddress )
 import Network.Socket ( Socket, socket, Family(..), SocketType(..), connect
                       , SockAddr(..), sClose )

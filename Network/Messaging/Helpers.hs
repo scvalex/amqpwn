@@ -1,4 +1,4 @@
-module Network.AMQP.Helpers (
+module Network.Messaging.Helpers (
         -- * ByteString manipulation
         toStrict, toLazy,
 
