@@ -294,7 +294,8 @@ connectionReceiver conn sock = do
                                    chId code (show reason)
                   case getChannelType ch of
                     ControlChannel ->
-                       atomically $ putTMVar (getChannelRPC ch) $ CE.throw exc
+                        atomically . putTMVar (getChannelRPC ch) $
+                          CE.throw exc
                     (PublishingChannel tid) ->
                        CE.throwTo tid exc
             closeChannel conn chId
@@ -302,8 +303,10 @@ connectionReceiver conn sock = do
             act <- atomically $ do
                      channels <- readTVar (getChannels conn)
                      case IM.lookup chId channels of
-                       Just ch -> return $ processChannelPayload ch payload
-                       Nothing -> return $ CE.throw . ConnectionClosedException $
+                       Just ch ->
+                           return $ processChannelPayload ch payload
+                       Nothing ->
+                           return $ CE.throw . ConnectionClosedException $
                                     printf "channel %d not open" chId
             act
 
