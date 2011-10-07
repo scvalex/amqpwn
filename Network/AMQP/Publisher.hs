@@ -15,7 +15,7 @@ import Control.Monad.State.Lazy ( MonadState(..), StateT(..), evalStateT )
 import qualified Data.ByteString.Lazy.Char8 as BL
 import qualified Data.Set as S
 import Data.String ( IsString(..) )
-import Network.AMQP.Connection ( openChannel, closeChannel, async )
+import Network.AMQP.Connection ( openChannel, closeChannel, request, async )
 import Network.AMQP.Types ( Connection, ChannelId, ChannelType(..)
                           , ExchangeName, RoutingKey, MessageId
                           , Method(..), MethodPayload(..)
@@ -75,8 +75,12 @@ runPublisher :: Connection -> Publisher a -> IO a
 runPublisher conn pub = do
   tid <- myThreadId
   (chId, _) <- openChannel conn (PublishingChannel tid)
+  request conn . SimpleMethod $ Confirm_select False
   let state = PState { getConnection = conn
                      , getChannelId  = chId
                      , getMsgSeqNo   = 1 }
   evalStateT (unPublisher pub) state
-    `CE.finally` closeChannel conn chId
+    `CE.finally` cleanup chId
+      where
+        cleanup chId = do
+          closeChannel conn chId
