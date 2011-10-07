@@ -1,7 +1,8 @@
 {-# LANGUAGE ScopedTypeVariables, OverloadedStrings #-}
 
-import Control.Concurrent ( ThreadId, forkIO, killThread )
-import Control.Concurrent.MVar ( newEmptyMVar, putMVar, takeMVar, tryPutMVar )
+import Control.Concurrent ( ThreadId, myThreadId, forkIO, killThread )
+import Control.Concurrent.MVar ( newEmptyMVar, putMVar, takeMVar, tryPutMVar
+                               , readMVar )
 import qualified Control.Exception as CE
 import Control.Monad ( forM_, replicateM )
 import Control.Monad.IO.Class ( MonadIO(..) )
@@ -10,6 +11,7 @@ import Network.AMQP.Types ( AMQPException(..) )
 import System.Exit ( exitFailure )
 import System.Posix.Unistd ( sleep )
 import Test.HUnit
+import Text.Printf ( printf )
 
 main :: IO ()
 main = do
@@ -142,17 +144,20 @@ tests = test [ "alwaysPass" ~: TestCase $
              , "justPublishBad" ~: TestCase $
                  withConnection $ \conn -> do
                      waiter <- newEmptyMVar
+                     timeout 1 $ putMVar waiter (Left ())
                      runPublisherBracket conn
                                          (return ())
                                          (\_ -> return ())
                                          (\(e :: CE.SomeException) ->
-                                              putMVar waiter (Left e)) $ \_ -> do
+                                              putMVar waiter (Right e)) $ \_ -> do
+                       tid <- liftIO myThreadId
                        publish "ni" "bah" "meh"
-                       liftIO $ sleep 1 >> putMVar waiter (Right ())
+                       liftIO $ readMVar waiter
+                       return ()
                      res <- takeMVar waiter
                      case res of
-                       Left _  -> return ()
-                       Right () -> assertFailure "succesfully published to \
+                       Right _ -> return ()
+                       Left ()  -> assertFailure "succesfully published to \
                                                 \non-existing exchange"
              ]
 
