@@ -44,7 +44,7 @@ tests = test [ "alwaysPass" ~: TestCase $
                  m <- newEmptyMVar
                  addConnectionClosedHandler conn (putMVar m . Right)
                  closeConnectionNormal conn
-                 tid <- timeout 1 $ tryPutMVar m (Left "timeout")
+                 tid <- after 1 $ tryPutMVar m (Left "timeout")
                  v <- takeMVar m
                  case v of
                    Left err ->
@@ -133,32 +133,26 @@ tests = test [ "alwaysPass" ~: TestCase $
              , "justPublish2" ~: TestCase $
                  withConnection $ \conn -> do
                      waiter <- newEmptyMVar
-                     runPublisherBracket conn
-                                         (return ())
-                                         (\_ -> putMVar waiter (return ()))
-                                         (\(e :: CE.SomeException) ->
-                                              putMVar waiter (CE.throw e)) $ \_ -> do
-                       publish "" "bah" "meh" >> return ()
+                     runPublisher conn
+                       (publish "" "bah" "meh" >> return ())
+                       `CE.catch` (\(e :: CE.SomeException) ->
+                                       putMVar waiter (CE.throw e))
+                       `CE.finally` (putMVar waiter (return ()))
                      act <- takeMVar waiter
                      act
              , "justPublishBad" ~: TestCase $
                  withConnection $ \conn -> do
                      waiter <- newEmptyMVar
-                     timeout 1 $ putMVar waiter (Left ())
-                     runPublisherBracket conn
-                                         (return ())
-                                         (\_ -> return ())
-                                         (\(e :: CE.SomeException) ->
-                                              putMVar waiter (Right e)) $ \_ -> do
-                       tid <- liftIO myThreadId
-                       publish "ni" "bah" "meh"
-                       liftIO $ readMVar waiter
-                       return ()
-                     res <- takeMVar waiter
-                     case res of
-                       Right _ -> return ()
-                       Left ()  -> assertFailure "succesfully published to \
-                                                \non-existing exchange"
+                     after 1 . putMVar waiter $
+                           assertFailure "succesfully published to \
+                                         \non-existing exchange"
+                     runPublisher conn
+                       (publish "ni" "bah" "meh" >>
+                        liftIO (readMVar waiter) >> return ())
+                       `CE.catch` (\(_ :: CE.SomeException) ->
+                                   putMVar waiter (return ()))
+                     act <- takeMVar waiter
+                     act
              ]
 
 stressTests :: Test
@@ -201,8 +195,8 @@ simpleExchgOp conn = do
   deleteExchange conn "test-exchange"
   return ()
 
-timeout :: Int -> IO a -> IO ThreadId
-timeout interval act = forkIO $ do
-                         sleep interval
-                         act
-                         return ()
+after :: Int -> IO a -> IO ThreadId
+after interval act = forkIO $ do
+                       sleep interval
+                       act
+                       return ()

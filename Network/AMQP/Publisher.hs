@@ -1,16 +1,14 @@
 {-# LANGUAGE MultiParamTypeClasses, ScopedTypeVariables #-}
 
 module Network.AMQP.Publisher (
-        -- * Opaque publisher type
-        Publisher, runPublisher, runPublisherBracket,
+        -- * The Publisher monad
+        Publisher, runPublisher,
 
         -- * Publishing methods
         publish, waitForConfirms
     ) where
 
-import Control.Concurrent ( ThreadId, forkIO )
-import Control.Concurrent.STM ( atomically
-                              , newEmptyTMVar, takeTMVar, putTMVar )
+import Control.Concurrent ( myThreadId )
 import qualified Control.Exception as CE
 import Control.Monad.IO.Class ( MonadIO(..) )
 import Control.Monad.State.Lazy ( MonadState(..), StateT(..), evalStateT )
@@ -57,36 +55,28 @@ publish x rk content = Publisher $ do
 waitForConfirms :: Publisher (S.Set MessageId)
 waitForConfirms = undefined
 
--- | Run the given publisher on a dedicated thread.
-runPublisher :: Connection -> Publisher () -> IO ThreadId
-runPublisher conn pub =
-    runPublisherBracket conn (return ()) (\_ -> return ())
-                        (\(_ :: CE.SomeException) -> return ()) (\_ -> pub)
-
--- | Run the given publisher o a dedicated thread, bracketed by the
--- given actions.
-runPublisherBracket :: (CE.Exception e)
-                    => Connection
-                    -> IO a               -- ^ the action to run first
-                    -> (a -> IO ())        -- ^ the action to run last
-                    -> (e -> IO ())        -- ^ handler to invoke if a
-                                         -- exception is raised
-                    -> (a -> Publisher ()) -- ^ the action to run in-between
-                    -> IO ThreadId
-runPublisherBracket conn acquire release handler pub = do
-  chIdTV <- atomically $ newEmptyTMVar
-  source <- acquire
-  tid <- forkIO $ publisherPrelaunch chIdTV source
+-- | Run the given publisher.
+--
+-- Important note: the thread that runs the publisher may receive
+-- asynchronous exceptions from the connection, while 'runPublisher'
+-- is being evaluated (if, for instance, it publishes to a
+-- non-existing exchange).  To handle such exceptions, wrap the call
+-- to 'runPublisher' in a 'catch'.  Once 'runPublisher' has finished,
+-- the thread will not receive such exceptions from the connection.
+--
+-- Since 'runPublisher' will not return until the publisher returns,
+-- it is probably best to run this on a dedicated thread.  So, for
+-- example:
+--
+-- @
+--     forkIO $ runPublisher connection publisher `CE.catch` exceptionHandler
+-- @
+runPublisher :: Connection -> Publisher a -> IO a
+runPublisher conn pub = do
+  tid <- myThreadId
   (chId, _) <- openChannel conn (PublishingChannel tid)
-  atomically $ putTMVar chIdTV chId
-  return tid
-    where
-      publisherPrelaunch chIdTV source = do
-        chId <- atomically $ takeTMVar chIdTV
-        let state = PState { getConnection = conn
-                           , getChannelId  = chId
-                           , getMsgSeqNo   = 1 }
-        evalStateT (unPublisher (pub source)) state
-           `CE.catch` handler
-           `CE.finally` (closeChannel conn chId >> release source)
-        return ()
+  let state = PState { getConnection = conn
+                     , getChannelId  = chId
+                     , getMsgSeqNo   = 1 }
+  evalStateT (unPublisher pub) state
+    `CE.finally` closeChannel conn chId
