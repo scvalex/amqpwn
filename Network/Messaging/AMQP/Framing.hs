@@ -16,7 +16,7 @@ module Network.Messaging.AMQP.Framing (
         Frame(..), FramePayload(..), Assembler(..),
 
         -- * Misc
-        ChannelId
+        ChannelId, MethodHandler
     ) where
 
 import Control.Applicative ( (<$>), (<*>) )
@@ -108,6 +108,10 @@ data Method = SimpleMethod MethodPayload
                             BL.ByteString
               -- ^ method, properties, content-data
               deriving ( Show )
+
+-- | A method handler is simply a function that takes a method's
+-- payload and warps reality in any way it sees fit.
+type MethodHandler = MethodPayload -> IO ()
 
 -- | True if a content (content-header and possibly content-body)
 -- follows this method

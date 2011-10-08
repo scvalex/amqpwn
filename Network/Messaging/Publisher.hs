@@ -24,6 +24,7 @@ import Network.Messaging.AMQP.Types ( Connection, ChannelId, ChannelType(..)
                                     , ExchangeName, RoutingKey, MessageId
                                     , Method(..), MethodPayload(..)
                                     , ContentHeaderProperties(..) )
+import Text.Printf ( printf )
 
 data PState = PState { getConnection  :: Connection
                      , getChannelId   :: ChannelId
@@ -93,7 +94,8 @@ runPublisher conn pub = do
   tid <- myThreadId
   waiter <- newMVar ()
   unconfirmed <- newMVar S.empty
-  (chId, _) <- openChannel conn (PublishingChannel tid () () ())
+  (chId, _) <- openChannel conn (PublishingChannel tid ackHandler
+                                                  nackHandler returnHandler)
   request conn . SimpleMethod $ ConfirmSelect False
   let state = PState { getConnection  = conn
                      , getChannelId   = chId
@@ -105,3 +107,9 @@ runPublisher conn pub = do
       where
         cleanup chId = do
           closeChannel conn chId
+        ackHandler (BasicAck tag _) = do
+          printf "Received an ack for %d" tag
+        nackHandler (BasicNack tag _ _) = do
+          printf "Received a nack for %d" tag
+        returnHandler (BasicReturn _ _ _ _) = do
+          printf "Received a basic.return; fsck me"

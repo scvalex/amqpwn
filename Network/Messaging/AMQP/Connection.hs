@@ -280,26 +280,46 @@ connectionReceiver conn sock = do
         forwardToChannel _ (MethodPayload (ChannelOpenOk _)) =
             return ()
 
-        -- Forward asynchronous message to other channels.
+        -- Bump acks, nacks and returns to channel handlers
+        forwardToChannel chId (MethodPayload p@(BasicAck _ _)) = do
+            withChannelFail chId $ \ch -> do
+              case getChannelType ch of
+                (PublishingChannel _ handler _ _) ->
+                    handler p
+                _ ->
+                    CE.throw $ ClientException "received ack on \
+                                               \non-publishing channel"
+        forwardToChannel chId (MethodPayload p@(BasicNack _ _ _)) = do
+            withChannelFail chId $ \ch -> do
+              case getChannelType ch of
+                (PublishingChannel _ _ handler _) ->
+                    handler p
+                _ ->
+                    CE.throw $ ClientException "received nack on \
+                                               \non-publishing channel"
+        forwardToChannel chId (MethodPayload p@(BasicReturn _ _ _ _)) = do
+            withChannelFail chId $ \ch -> do
+              case getChannelType ch of
+                (PublishingChannel _ _ _ handler) ->
+                    handler p
+                _ ->
+                    CE.throw $ ClientException "received return on \
+                                               \non-publishing channel"
+
+        -- Handle channel.close here
         forwardToChannel chId (MethodPayload (ChannelClose code reason _ _)) = do
-            mch <- atomically $ do
-                    chs <- readTVar (getChannels conn)
-                    case IM.lookup chId chs of
-                      Nothing -> return Nothing
-                      Just ch -> return (Just ch)
-            case mch of
-              Nothing -> return ()
-              Just ch -> do
-                  let exc = ChannelClosedException $
-                            printf "channel %d closed: %d '%s'"
-                                   chId code (show reason)
-                  case getChannelType ch of
-                    ControlChannel ->
-                        atomically . putTMVar (getChannelRPC ch) $
-                          CE.throw exc
-                    (PublishingChannel tid _ _ _) ->
-                       CE.throwTo tid exc
+            withChannel chId (return ()) $ \ch -> do
+              let exc = ChannelClosedException $
+                        printf "channel %d closed: %d '%s'"
+                               chId code (show reason)
+              case getChannelType ch of
+                ControlChannel ->
+                    atomically . putTMVar (getChannelRPC ch) $ CE.throw exc
+                (PublishingChannel tid _ _ _) ->
+                    CE.throwTo tid exc
             closeChannel conn chId
+
+        -- Forward asynchronous message to other channels.
         forwardToChannel chId payload = do
             act <- atomically $ do
                      channels <- readTVar (getChannels conn)
@@ -324,6 +344,22 @@ connectionReceiver conn sock = do
             case mMethod of
               Nothing     -> return ()
               Just method -> atomically $ putTMVar (getChannelRPC ch) method
+
+        withChannelFail chId =
+            withChannel chId (CE.throw . ClientException $
+                              printf "received frame for non-existing \
+                                     \channel: %d" chId)
+
+        withChannel :: ChannelId -> IO a -> (Channel -> IO a) -> IO a
+        withChannel chId failAct act = do
+          mch <- atomically $ do
+                  chs <- readTVar (getChannels conn)
+                  case IM.lookup chId chs of
+                    Nothing -> return Nothing
+                    Just ch -> return (Just ch)
+          case mch of
+            Nothing   -> failAct
+            (Just ch) -> act ch
 
 -- | Perform an asynchronous AMQP request.
 -- FIXME: Proper error handling.

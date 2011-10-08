@@ -60,11 +60,10 @@ data Channel = Channel
 -- | What is the channel used for?  Control commands?  Publishing?
 data ChannelType = ControlChannel
                  | PublishingChannel { getPublishingThreadId :: ThreadId
-                                     , getBasicAckHandler :: ()
-                                     , getBasicNackHandler :: ()
-                                     , getBasicReturnHandler :: ()
+                                     , getBasicAckHandler :: MethodHandler
+                                     , getBasicNackHandler :: MethodHandler
+                                     , getBasicReturnHandler :: MethodHandler
                                      }
-                   deriving ( Eq )
 
 -- Convenience types
 
