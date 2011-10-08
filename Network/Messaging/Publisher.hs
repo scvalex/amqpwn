@@ -75,7 +75,7 @@ waitForConfirms = undefined
 runPublisher :: Connection -> Publisher a -> IO a
 runPublisher conn pub = do
   tid <- myThreadId
-  (chId, _) <- openChannel conn (PublishingChannel tid)
+  (chId, _) <- openChannel conn (PublishingChannel tid () () ())
   request conn . SimpleMethod $ ConfirmSelect False
   let state = PState { getConnection = conn
                      , getChannelId  = chId

@@ -297,7 +297,7 @@ connectionReceiver conn sock = do
                     ControlChannel ->
                         atomically . putTMVar (getChannelRPC ch) $
                           CE.throw exc
-                    (PublishingChannel tid) ->
+                    (PublishingChannel tid _ _ _) ->
                        CE.throwTo tid exc
             closeChannel conn chId
         forwardToChannel chId payload = do
