@@ -32,7 +32,6 @@ Library
   Ghc-options:        -Wall -fno-warn-unused-do-bind -fno-warn-incomplete-patterns
   Exposed-modules:    Network.Messaging
   Other-modules:      Network.Messaging.AMQP.Framing,
-                      Network.Messaging.AMQP.Protocol,
                       Network.Messaging.AMQP.FramingTypes,
                       Network.Messaging.AMQP.Connection,
                       Network.Messaging.AMQP.Types,

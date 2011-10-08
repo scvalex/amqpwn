@@ -5,28 +5,18 @@ module Network.Messaging.AMQP.Types (
         module Network.Messaging.AMQP.Framing,
 
         -- * AMQP high-level types
-        Connection(..), Channel(..), Assembler(..),
-        ChannelId, ChannelType(..),
+        Connection(..), Channel(..), ChannelType(..),
 
         -- * Convenience types
         QueueName, ExchangeName, ExchangeType, RoutingKey, MessageId,
-
-        -- * Message payload
-        Method(..), Frame(..), FramePayload(..),
 
         -- * AMQP Exceptions
         AMQPException(..)
     ) where
 
-import Control.Applicative ( Applicative(..), (<$>) )
 import Control.Concurrent ( ThreadId )
 import Control.Concurrent.STM ( TVar, TMVar )
 import Control.Exception ( Exception )
-import Data.Binary ( Binary(..) )
-import Data.Binary.Get ( Get, getWord8, getLazyByteString )
-import Data.Binary.Put ( Put, runPut, putWord8, putLazyByteString )
-import Data.ByteString.Lazy.Char8 ( ByteString )
-import qualified Data.ByteString.Lazy.Char8 as BL
 import Data.Int ( Int64 )
 import Data.IntMap ( IntMap )
 import Data.Typeable ( Typeable )
@@ -67,17 +57,6 @@ data Channel = Channel
       -- ^ holder for the channel's control command result
     }
 
--- | Represents a "method assembler".  It's effectively a function
--- that takes a frame payload and either outputs another 'Assembler'
--- to run the next frame on, or outputs a complete 'Method' and a new
--- 'Assembler'.  We use closures to model the assembler's state.
-newtype Assembler = Assembler (FramePayload -> Either Assembler (Method, Assembler))
-
--- | We represent channel identifiers as 'Int's.  Note that there's also
--- 'ChannelID', which is actually a Word16 and is only used
--- internally.
-type ChannelId = Int
-
 -- | What is the channel used for?  Control commands?  Publishing?
 data ChannelType = ControlChannel | PublishingChannel ThreadId
                    deriving ( Eq )
@@ -101,50 +80,6 @@ type RoutingKey = String
 -- | Message ids are just plain 'Int's.
 type MessageId = Int
 
--- Message payload
-
--- | A Method is a higher-level object consisting of several frames.
-data Method = SimpleMethod MethodPayload
-            | ContentMethod MethodPayload ContentHeaderProperties ByteString
-              -- ^ method, properties, content-data
-              deriving ( Show )
-
--- | A frame received on a channel
-data Frame = Frame ChannelID FramePayload -- ^ channel, payload
-             deriving ( Show )
-
-instance Binary Frame where
-    get = do
-      thisFrameType <- getWord8
-      channelId <- get :: Get ChannelID
-      payloadSize <- get :: Get PayloadSize
-      payload <- getPayload (toEnum $ fromIntegral thisFrameType) payloadSize
-      0xCE <- getWord8           -- frame end
-      return $ Frame channelId payload
-    put (Frame channelId payload) = do
-      putWord8 . fromIntegral $ fromEnum payload
-      put channelId
-      let buf = runPut $ putPayload payload
-      put ((fromIntegral $ BL.length buf) :: PayloadSize)
-      putLazyByteString buf
-      putWord8 0xCE             -- frame end
-
--- | A frame's payload
-data FramePayload = MethodPayload MethodPayload
-                  | ContentHeaderPayload ShortInt ShortInt LongLongInt
-                                         ContentHeaderProperties
-                  -- ^ classId, weight, bodySize, propertyFields
-                  | ContentBodyPayload BL.ByteString
-                    deriving ( Show )
-
-instance Enum FramePayload where
-    fromEnum (MethodPayload _)              = 1
-    fromEnum (ContentHeaderPayload _ _ _ _) = 2
-    fromEnum (ContentBodyPayload _)         = 3
-    toEnum 1 = MethodPayload { }
-    toEnum 2 = ContentHeaderPayload { }
-    toEnum 3 = ContentBodyPayload { }
-
 -- Exceptions
 
 -- | The Exception thrown when soft and hard AQMP errors occur.
@@ -155,27 +90,3 @@ data AMQPException = ChannelClosedException String
                      deriving (Typeable, Show, Ord, Eq)
 
 instance Exception AMQPException
-
--- Internal Helpers
--- | Get a the given method's payload.
--- FIXME: Fill in the given method rather than building a new one.
-getPayload :: (Integral n) => FramePayload -> n -> Get FramePayload
-getPayload (MethodPayload _) _ = do
-  MethodPayload <$> get
-getPayload (ContentHeaderPayload _ _ _ _) _ = do
-  classID <- get :: Get ShortInt
-  ContentHeaderPayload <$> return classID
-                       <*> get
-                       <*> get
-                       <*> getContentHeaderProperties classID
-getPayload (ContentBodyPayload _) payloadSize = do
-  ContentBodyPayload <$> (getLazyByteString $ fromIntegral payloadSize)
-
--- | Put a frame's payload.
-putPayload :: FramePayload -> Put
-putPayload (MethodPayload payload) =
-    put payload
-putPayload (ContentHeaderPayload classID weight bodySize p) =
-    put classID >> put weight >> put bodySize >> putContentHeaderProperties p
-putPayload (ContentBodyPayload payload) =
-    putLazyByteString payload

@@ -34,7 +34,7 @@ tests = test [ "alwaysPass" ~: TestCase $
                      openConnection "localhost" (5600 :: Int) "/" "guest" "guest"
                      assertFailure "connected to non-existing broker"
              , "connectionWrongLogin" ~: TestCase $
-                 CE.handle (\(ConnectionClosedException _) -> return ()) $ do
+                 CE.handle (\(_ :: CE.IOException) -> return ()) $ do
                      openConnection "localhost" 5672 "/" "guest" "geust"
                      assertFailure "connected with wrong password"
              , "connectionCloseHandler" ~: TestCase $ do

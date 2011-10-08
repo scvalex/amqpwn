@@ -39,9 +39,6 @@ import qualified Data.ByteString.Lazy.Char8 as BL
 import qualified Data.IntMap as IM
 import qualified Data.Map as M
 import Data.String ( IsString(..) )
-import Network.Messaging.AMQP.Protocol ( readFrameSock, writeFrameSock
-                                       , writeFrames
-                                       , newEmptyAssembler )
 import Network.Messaging.Helpers ( toStrict, modifyTVar, withTMVarIO )
 import Network.Messaging.AMQP.Types ( Connection(..), Channel(..)
                                     , Assembler(..), ChannelId
@@ -49,7 +46,9 @@ import Network.Messaging.AMQP.Types ( Connection(..), Channel(..)
                                     , FramePayload(..), Method(..)
                                     , MethodPayload(..), FieldTable(..)
                                     , ShortString(..), LongString(..)
-                                    , AMQPException(..), getClassIdOf )
+                                    , AMQPException(..), getClassIdOf
+                                    , readFrameSock, writeFrameSock
+                                    , newEmptyAssembler )
 import Network.BSD ( getProtocolNumber, getHostByName, hostAddress )
 import Network.Socket ( Socket, socket, Family(..), SocketType(..), connect
                       , SockAddr(..), sClose )
@@ -418,3 +417,13 @@ newChannel = atomically $ do
                  , getConsumer    = consumer
                  , getChannelType = ControlChannel
                  , getChannelRPC  = rpc }
+
+-- | Write the given frames to the connection/channel.
+writeFrames :: Connection -> ChannelId -> [FramePayload] -> IO ()
+writeFrames conn chId payloads = do
+  withTMVarIO (getSocket conn) $ \sock -> do
+      mapM_ (\p -> writeFrameSock sock (Frame (fromIntegral chId) p))
+            payloads
+      `CE.catch`
+        (\(e :: CE.IOException) -> CE.throw . ClientException $
+                                 printf "IOException on %d: %s" chId (show e))
