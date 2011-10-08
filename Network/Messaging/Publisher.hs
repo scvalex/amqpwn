@@ -44,7 +44,7 @@ publish x rk content = Publisher $ do
                   getChannelId = chId,
                   getMsgSeqNo = msn }) <- get
   liftIO $ async conn chId $
-            ContentMethod (Basic_publish 0 (fromString x)
+            ContentMethod (BasicPublish 0 (fromString x)
                                          (fromString rk) True False)
                           (CHBasic Nothing Nothing Nothing (Just 2) Nothing
                                    Nothing Nothing Nothing Nothing Nothing
@@ -76,7 +76,7 @@ runPublisher :: Connection -> Publisher a -> IO a
 runPublisher conn pub = do
   tid <- myThreadId
   (chId, _) <- openChannel conn (PublishingChannel tid)
-  request conn . SimpleMethod $ Confirm_select False
+  request conn . SimpleMethod $ ConfirmSelect False
   let state = PState { getConnection = conn
                      , getChannelId  = chId
                      , getMsgSeqNo   = 1 }

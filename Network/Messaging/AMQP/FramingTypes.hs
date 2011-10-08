@@ -109,8 +109,9 @@ mkVarField domainMap f c df@(DomainField fn _) =
 mkFunName :: String -> String -> Name
 mkFunName c fn = mkName $
                  printf "get%s%s" c (concatMap capitalize $ split '-' fn)
-    where
-      split brk = words . map (\x -> if x == brk then ' ' else x)
+
+split :: Char -> String -> [String]
+split brk = words . map (\x -> if x == brk then ' ' else x)
 
 -- Bits need special handling because AMQP requires contiguous bits to
 -- be packed into a Word8
@@ -163,7 +164,8 @@ condPut _ = return ()
 -- | Make a method name by concatenating the AMQP class and method
 -- names.  This is actually used to name data-type constructors.
 mkMethodName :: String -> String -> String
-mkMethodName cNam nam = printf "%s_%s" (capitalize cNam) (fixMethodName nam)
+mkMethodName cNam nam = printf "%s%s" (capitalize cNam)
+                                      (concatMap capitalize $ split '-' nam)
 
 -- | Use this to create chains of lambdas and their ilk.
 appAll :: ExpQ -> [ExpQ] -> ExpQ

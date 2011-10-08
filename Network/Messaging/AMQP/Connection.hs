@@ -101,7 +101,7 @@ openConnection host port vhost username password = do
         case frame of
           Frame 0 methodPayload ->
               case methodPayload of
-                (MethodPayload (Connection_start 0 9 _ ms _))
+                (MethodPayload (ConnectionStart 0 9 _ ms _))
                                  | "AMQPLAIN" `elem` (words $ show ms) ->
                     doConnectionOpen CStarting2 sock frameMax
                 _ ->
@@ -119,7 +119,7 @@ openConnection host port vhost username password = do
                                       , ( fromString "PASSWORD"
                                         , fromString password)
                                       ])
-        writeFrameSock sock . Frame 0 . MethodPayload $ Connection_start_ok
+        writeFrameSock sock . Frame 0 . MethodPayload $ ConnectionStartOk
                            (FieldTable (M.fromList []))
                            (ShortString "AMQPLAIN")
                            loginTable
@@ -131,14 +131,14 @@ openConnection host port vhost username password = do
         case frame of
           (Frame 0 methodPayload) ->
               case methodPayload of
-                (MethodPayload (Connection_tune _ sFrameMax _)) -> do
+                (MethodPayload (ConnectionTune _ sFrameMax _)) -> do
                     let frameMax' =
                             if frameMax == 0
                               then (fromIntegral sFrameMax)
                               else min frameMax (fromIntegral sFrameMax)
                     -- C: tune_ok
                     writeFrameSock sock . Frame 0 . MethodPayload
-                         $ Connection_tune_ok 0 (fromIntegral frameMax') 0
+                         $ ConnectionTuneOk 0 (fromIntegral frameMax') 0
                     doConnectionOpen COpening sock frameMax'
                 _ ->
                     CE.throw . ConnectionStartException $
@@ -148,7 +148,7 @@ openConnection host port vhost username password = do
                     "unexpected frame on non-0 channel"
       doConnectionOpen COpening sock frameMax = do
         -- C: open
-        writeFrameSock sock . Frame 0 . MethodPayload  $ Connection_open
+        writeFrameSock sock . Frame 0 . MethodPayload  $ ConnectionOpen
                            (ShortString vhost) -- virtual host
                            (ShortString "")    -- capabilities
                            True                -- insist
@@ -157,7 +157,7 @@ openConnection host port vhost username password = do
         case frame of
           Frame 0 methodPayload ->
               case methodPayload of
-                (MethodPayload (Connection_open_ok _)) ->
+                (MethodPayload (ConnectionOpenOk _)) ->
                     doConnectionOpen COpen sock frameMax
                 _ ->
                     CE.throw . ConnectionStartException $
@@ -224,7 +224,7 @@ closeConnection replyCode replyText conn = do
       doClose = do
         withTMVarIO (getSocket conn) $ \sock ->
             writeFrameSock sock $ Frame 0 $
-                           MethodPayload $ Connection_close
+                           MethodPayload $ ConnectionClose
                                              (fromIntegral replyCode)
                                              (fromString replyText)
                                              0 -- class_id
@@ -260,11 +260,11 @@ connectionReceiver conn sock = do
   connectionReceiver conn sock
       where
         -- Forward to channel0.
-        forwardToChannel 0 (MethodPayload Connection_close_ok) = do
+        forwardToChannel 0 (MethodPayload ConnectionCloseOk) = do
             atomically $ tryPutTMVar (getConnClosed conn)
                                      (ConnectionClosedException "Normal")
             killThread =<< myThreadId -- finalize connection will now run
-        forwardToChannel 0 (MethodPayload (Connection_close _ s _ _ )) = do
+        forwardToChannel 0 (MethodPayload (ConnectionClose _ s _ _ )) = do
             let (ShortString errorMsg) = s
             atomically $ tryPutTMVar (getConnClosed conn)
                                      (ConnectionClosedException errorMsg)
@@ -274,14 +274,14 @@ connectionReceiver conn sock = do
               printf "unexpected msg on channel zero: %s" (show msg)
 
         -- Ignore @channel.close_ok@.  Because we're awesome.
-        forwardToChannel _ (MethodPayload Channel_close_ok) =
+        forwardToChannel _ (MethodPayload ChannelCloseOk) =
             return ()
         -- See above.
-        forwardToChannel _ (MethodPayload (Channel_open_ok _)) =
+        forwardToChannel _ (MethodPayload (ChannelOpenOk _)) =
             return ()
 
         -- Forward asynchronous message to other channels.
-        forwardToChannel chId (MethodPayload (Channel_close code reason _ _)) = do
+        forwardToChannel chId (MethodPayload (ChannelClose code reason _ _)) = do
             mch <- atomically $ do
                     chs <- readTVar (getChannels conn)
                     case IM.lookup chId chs of
@@ -382,7 +382,7 @@ openChannel conn chType = do
 -- wait for the @channel.open_ok@.
 openChannel' :: Connection -> ChannelId -> IO ()
 openChannel' conn chId =
-    unsafeWriteMethod conn chId . SimpleMethod $ Channel_open (fromString "")
+    unsafeWriteMethod conn chId . SimpleMethod $ ChannelOpen (fromString "")
 
 -- | Remove the channel from the connection's channel map and perform
 -- the @channel.close@.  If the channel is unregistered, assume it's
@@ -403,7 +403,7 @@ closeChannel conn chId = do
 -- wait for the @channel.close_ok@.
 closeChannel' :: Connection -> ChannelId -> IO ()
 closeChannel' conn chId =
-    unsafeWriteMethod conn chId (SimpleMethod (Channel_close 200 (fromString "Ok") 0 0))
+    unsafeWriteMethod conn chId (SimpleMethod (ChannelClose 200 (fromString "Ok") 0 0))
 
 -- | Create a new 'Channel' value.
 newChannel :: IO Channel

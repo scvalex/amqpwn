@@ -52,15 +52,15 @@ declareAnonQueue conn = do
 declareQueueInternal :: Connection -> QueueName -> IO (QueueName, Int)
 declareQueueInternal conn qn = do
   resp <- request conn . SimpleMethod $
-         Queue_declare 0               -- ticket
-                       (fromString qn) -- name
-                       False           -- passive
-                       True            -- durable
-                       False           -- exclusive
-                       False           -- auto-delete
-                       False           -- nowait
-                       (FieldTable (M.fromList []))
-  let !(SimpleMethod (Queue_declare_ok (ShortString name) count _)) = resp
+         QueueDeclare 0               -- ticket
+                      (fromString qn) -- name
+                      False           -- passive
+                      True            -- durable
+                      False           -- exclusive
+                      False           -- auto-delete
+                      False           -- nowait
+                      (FieldTable (M.fromList []))
+  let !(SimpleMethod (QueueDeclareOk (ShortString name) count _)) = resp
   return (name, (fromIntegral count))
 
 -- | Delete the queue with the specified name.  Throw an exception if
@@ -69,12 +69,12 @@ declareQueueInternal conn qn = do
 deleteQueue :: Connection -> QueueName -> IO Int
 deleteQueue conn qn = do
   resp <- request conn . SimpleMethod $
-         Queue_delete 0               -- ticket
-                      (fromString qn) -- name
-                      False           -- if-unused
-                      False           -- if-empty
-                      False           -- nowait
-  let !(SimpleMethod (Queue_delete_ok count)) = resp
+         QueueDelete 0               -- ticket
+                     (fromString qn) -- name
+                     False           -- if-unused
+                     False           -- if-empty
+                     False           -- nowait
+  let !(SimpleMethod (QueueDeleteOk count)) = resp
   return (fromIntegral count)
 
 -- | Declare an exchange with the specified name, type and internal
@@ -86,16 +86,16 @@ declareExchange :: Connection
                 -> IO ()
 declareExchange conn en et internal = do
   resp <- request conn . SimpleMethod $
-         Exchange_declare 0               -- ticket
-                          (fromString en) -- name
-                          (fromString et) -- type
-                          False           -- passive
-                          True            -- durable
-                          False           -- auto-delete
-                          internal        -- guess what this is
-                          False           -- nowait
-                          (FieldTable (M.fromList []))
-  let !(SimpleMethod Exchange_declare_ok) = resp
+         ExchangeDeclare 0               -- ticket
+                         (fromString en) -- name
+                         (fromString et) -- type
+                         False           -- passive
+                         True            -- durable
+                         False           -- auto-delete
+                         internal        -- guess what this is
+                         False           -- nowait
+                         (FieldTable (M.fromList []))
+  let !(SimpleMethod ExchangeDeclareOk) = resp
   return ()
 
 -- | Delete the exchange with the given name.  Throw an exception if
@@ -103,11 +103,11 @@ declareExchange conn en et internal = do
 deleteExchange :: Connection -> ExchangeName -> IO ()
 deleteExchange conn en = do
   resp <- request conn . SimpleMethod $
-         Exchange_delete 0               -- ticket
-                         (fromString en) -- name
-                         False           -- if-unused
-                         False           -- nowait
-  let !(SimpleMethod Exchange_delete_ok) = resp
+         ExchangeDelete 0               -- ticket
+                        (fromString en) -- name
+                        False           -- if-unused
+                        False           -- nowait
+  let !(SimpleMethod ExchangeDeleteOk) = resp
   return ()
 
 -- | Bind a queue to an exchange with the given routing key.  Throw an
@@ -115,13 +115,13 @@ deleteExchange conn en = do
 bindQueue :: Connection -> QueueName -> ExchangeName -> RoutingKey -> IO ()
 bindQueue conn qn en rk = do
   resp <- request conn . SimpleMethod $
-         Queue_bind 0               -- ticket
-                    (fromString qn) -- queue name
-                    (fromString en) -- exchange name
-                    (fromString rk) -- routing key
-                    False           -- nowait
-                    (FieldTable (M.fromList []))
-  let !(SimpleMethod Queue_bind_ok) = resp
+         QueueBind 0               -- ticket
+                   (fromString qn) -- queue name
+                   (fromString en) -- exchange name
+                   (fromString rk) -- routing key
+                   False           -- nowait
+                   (FieldTable (M.fromList []))
+  let !(SimpleMethod QueueBindOk) = resp
   return ()
 
 -- | Unbind a queue from an exchange with the given routing key.
@@ -129,12 +129,12 @@ bindQueue conn qn en rk = do
 unbindQueue :: Connection -> QueueName -> ExchangeName -> RoutingKey -> IO ()
 unbindQueue conn qn en rk = do
   resp <- request conn . SimpleMethod $
-         Queue_unbind 0               -- ticket
-                      (fromString qn) -- queue name
-                      (fromString en) -- exchange name
-                      (fromString rk) -- routing key
-                      (FieldTable (M.fromList []))
-  let !(SimpleMethod Queue_unbind_ok) = resp
+         QueueUnbind 0               -- ticket
+                     (fromString qn) -- queue name
+                     (fromString en) -- exchange name
+                     (fromString rk) -- routing key
+                     (FieldTable (M.fromList []))
+  let !(SimpleMethod QueueUnbindOk) = resp
   return ()
 
 -- | Bind an exchange to another exchange with the given routing key.
@@ -142,13 +142,13 @@ unbindQueue conn qn en rk = do
 bindExchange :: Connection -> ExchangeName -> ExchangeName -> RoutingKey -> IO ()
 bindExchange conn en1 en2 rk = do
   resp <- request conn . SimpleMethod $
-         Exchange_bind 0                -- ticket
-                       (fromString en1) -- name of first exchange
-                       (fromString en2) -- name of second exchange
-                       (fromString rk)  -- routing key
-                       False            -- nowait
-                       (FieldTable (M.fromList []))
-  let !(SimpleMethod Exchange_bind_ok) = resp
+         ExchangeBind 0                -- ticket
+                      (fromString en1) -- name of first exchange
+                      (fromString en2) -- name of second exchange
+                      (fromString rk)  -- routing key
+                      False            -- nowait
+                      (FieldTable (M.fromList []))
+  let !(SimpleMethod ExchangeBindOk) = resp
   return ()
 
 -- | Unbind an exchange from another exchange with the given routing
@@ -156,11 +156,11 @@ bindExchange conn en1 en2 rk = do
 unbindExchange :: Connection -> ExchangeName -> ExchangeName -> RoutingKey -> IO ()
 unbindExchange conn en1 en2 rk = do
   resp <- request conn . SimpleMethod $
-         Exchange_unbind 0                -- ticket
-                         (fromString en1) -- name of first exchange
-                         (fromString en2) -- name of second exchange
-                         (fromString rk)  -- routing key
-                         False            -- nowait
-                         (FieldTable (M.fromList []))
-  let !(SimpleMethod Exchange_unbind_ok) = resp
+         ExchangeUnbind 0                -- ticket
+                        (fromString en1) -- name of first exchange
+                        (fromString en2) -- name of second exchange
+                        (fromString rk)  -- routing key
+                        False            -- nowait
+                        (FieldTable (M.fromList []))
+  let !(SimpleMethod ExchangeUnbindOk) = resp
   return ()

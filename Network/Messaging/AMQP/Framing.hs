@@ -112,10 +112,10 @@ data Method = SimpleMethod MethodPayload
 -- | True if a content (content-header and possibly content-body)
 -- follows this method
 methodHasContent :: FramePayload -> Bool
-methodHasContent (MethodPayload (Basic_get_ok _ _ _ _ _))  = True
-methodHasContent (MethodPayload (Basic_deliver _ _ _ _ _)) = True
-methodHasContent (MethodPayload (Basic_return _ _ _ _))    = True
-methodHasContent _                                         = False
+methodHasContent (MethodPayload (BasicGetOk _ _ _ _ _))   = True
+methodHasContent (MethodPayload (BasicDeliver _ _ _ _ _)) = True
+methodHasContent (MethodPayload (BasicReturn _ _ _ _))    = True
+methodHasContent _                                        = False
 
 -- | Get the size of the frame.
 -- Pre: the argument is at least 7 bytes long
