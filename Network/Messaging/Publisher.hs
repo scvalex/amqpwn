@@ -8,10 +8,13 @@ module Network.Messaging.Publisher (
         publish, waitForConfirms
     ) where
 
-import Control.Concurrent ( myThreadId )
+import Control.Concurrent ( myThreadId
+                          , MVar, newMVar, tryTakeMVar, modifyMVar_
+                          , readMVar )
 import qualified Control.Exception as CE
 import Control.Monad.IO.Class ( MonadIO(..) )
-import Control.Monad.State.Lazy ( MonadState(..), StateT(..), evalStateT )
+import Control.Monad.State.Lazy ( MonadState(..), StateT(..)
+                                , evalStateT, gets )
 import qualified Data.ByteString.Lazy.Char8 as BL
 import qualified Data.Set as S
 import Data.String ( IsString(..) )
@@ -22,9 +25,11 @@ import Network.Messaging.AMQP.Types ( Connection, ChannelId, ChannelType(..)
                                     , Method(..), MethodPayload(..)
                                     , ContentHeaderProperties(..) )
 
-data PState = PState { getConnection :: Connection
-                     , getChannelId  :: ChannelId
-                     , getMsgSeqNo   :: Int }
+data PState = PState { getConnection  :: Connection
+                     , getChannelId   :: ChannelId
+                     , getMsgSeqNo    :: Int
+                     , getUnconfirmed :: MVar (S.Set MessageId)
+                     , getWaiter      :: MVar () }
 
 newtype Publisher a = Publisher { unPublisher :: StateT PState IO a }
 
@@ -40,21 +45,32 @@ instance MonadIO Publisher where
 -- Confirms for details).
 publish :: ExchangeName -> RoutingKey -> BL.ByteString -> Publisher MessageId
 publish x rk content = Publisher $ do
-  state@(PState { getConnection = conn,
-                  getChannelId = chId,
-                  getMsgSeqNo = msn }) <- get
-  liftIO $ async conn chId $
-            ContentMethod (BasicPublish 0 (fromString x)
-                                         (fromString rk) True False)
-                          (CHBasic Nothing Nothing Nothing (Just 2) Nothing
-                                   Nothing Nothing Nothing Nothing Nothing
-                                   Nothing Nothing Nothing Nothing)
-                          content
+  state@(PState { getConnection  = conn
+                , getChannelId   = chId
+                , getMsgSeqNo    = msn
+                , getWaiter      = waiter
+                , getUnconfirmed = unconfirmed }) <- get
+  liftIO $ do
+    tryTakeMVar waiter   -- block subsequent waits
+    modifyMVar_ unconfirmed $ return . (S.insert msn)
+    async conn chId $
+          ContentMethod (BasicPublish 0 (fromString x)
+                                      (fromString rk) True False)
+                        (CHBasic Nothing Nothing Nothing (Just 2) Nothing
+                                 Nothing Nothing Nothing Nothing Nothing
+                                 Nothing Nothing Nothing Nothing)
+                        content
   put $ state { getMsgSeqNo = msn + 1 }
   return msn
 
+-- | Wait until all messages published so far have been either
+-- acknowledged (via @basic.ack@) or rejected (via @basic.nack@ or
+-- @basic.return@).
 waitForConfirms :: Publisher (S.Set MessageId)
-waitForConfirms = undefined
+waitForConfirms = Publisher $ do
+  waiter <- gets getWaiter
+  liftIO $ readMVar waiter
+  return S.empty
 
 -- | Run the given publisher.
 --
@@ -75,11 +91,15 @@ waitForConfirms = undefined
 runPublisher :: Connection -> Publisher a -> IO a
 runPublisher conn pub = do
   tid <- myThreadId
+  waiter <- newMVar ()
+  unconfirmed <- newMVar S.empty
   (chId, _) <- openChannel conn (PublishingChannel tid () () ())
   request conn . SimpleMethod $ ConfirmSelect False
-  let state = PState { getConnection = conn
-                     , getChannelId  = chId
-                     , getMsgSeqNo   = 1 }
+  let state = PState { getConnection  = conn
+                     , getChannelId   = chId
+                     , getMsgSeqNo    = 1
+                     , getWaiter      = waiter
+                     , getUnconfirmed = unconfirmed }
   evalStateT (unPublisher pub) state
     `CE.finally` cleanup chId
       where
