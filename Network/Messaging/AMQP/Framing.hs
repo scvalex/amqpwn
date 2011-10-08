@@ -34,16 +34,21 @@ import Network.Messaging.Helpers ( toLazy, toStrict )
 import Network.Socket ( Socket )
 import qualified Network.Socket.ByteString as NB
 
+-- | Content header properties used when publishing.
 $(genContentHeaderProperties domainMap classes)
 
+-- | Get the numeric class id of the given class.
 $(genClassIdFuns classes)
 getClassIdOf :: (Num a) => ContentHeaderProperties -> a
 
+-- | The actual identifier and properties for each method.
 $(genMethodPayload domainMap classes)
 
+-- | 'Data.Binary.Get' function for content headers.
 $(genGetContentHeaderProperties classes)
 getContentHeaderProperties :: (Num a) => a -> Get ContentHeaderProperties
 
+-- | 'Data.Binary.Put' function for content headers.
 $(genPutContentHeaderProperties classes)
 putContentHeaderProperties :: ContentHeaderProperties -> Put
 
@@ -120,6 +125,9 @@ peekFrameSize = runGet $ do
                   get :: Get ChannelID -- 2 bytes
                   return =<< get      -- 4 bytes
 
+-- | Read a frame from the socket.  This will fail with an
+-- 'IOException' if the socket is closed or if the frame is
+-- fundamentally malformed.
 readFrameSock :: Socket -> IO Frame
 readFrameSock sock = do
   dat <- recvExact 7
@@ -128,16 +136,16 @@ readFrameSock sock = do
   let (frame, _, consumedBytes) = runGetState get (BL.append dat dat') 0
 
   if consumedBytes /= fromIntegral (len+8)
-    then error $ "readFrameSock: parser should read " ++ show (len + 8) ++
-                 " bytes; but read " ++ show consumedBytes
+    then fail $ "readFrameSock: parser should read " ++ show (len + 8) ++
+                " bytes; but read " ++ show consumedBytes
     else return ()
   return frame
     where
       recvExact bytes = do
         b <- recvExact' bytes $ BL.empty
         if BL.length b /= fromIntegral bytes
-          then error $ "recvExact wanted " ++ show bytes ++
-                       " bytes; got " ++ show (BL.length b) ++ " bytes"
+          then fail $ "recvExact wanted " ++ show bytes ++
+                      " bytes; got " ++ show (BL.length b) ++ " bytes"
           else return b
       recvExact' bytes buf = do
         dat <- NB.recv sock bytes
@@ -150,6 +158,7 @@ readFrameSock sock = do
               then return buf'
               else recvExact' (bytes-len) buf'
 
+-- | Write a single frame to the socket.
 writeFrameSock :: Socket -> Frame -> IO ()
 writeFrameSock sock x = do
   NB.send sock $ toStrict $ runPut $ put x
@@ -176,12 +185,15 @@ newEmptyAssembler =
           Assembler $ \(ContentBodyPayload payload) ->
               let remData' = remData - fromIntegral (BL.length payload)
               in if remData' > 0
-                 then Left (bodyContentCollector p props remData' (payload:acc))
+                 then Left (bodyContentCollector p props remData'
+                                                 (payload:acc))
                  else Right ( ContentMethod p props
-                                            (BL.concat $ reverse (payload:acc))
+                                            (BL.concat $
+                                             reverse (payload:acc))
                             , newEmptyAssembler )
 
 -- Internal Helpers
+
 -- | Get a the given method's payload.
 -- FIXME: Fill in the given method rather than building a new one.
 getPayload :: (Integral n) => FramePayload -> n -> Get FramePayload
