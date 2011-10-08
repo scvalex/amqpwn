@@ -1,20 +1,18 @@
 Name:                amqpwn
 Version:             0.3.0
-Synopsis:            Client library for AMQP servers (currently only RabbitMQ)
-Description:         Client library for AMQP servers (currently only RabbitMQ)
-License:             BSD3
+Synopsis:            Messaging client (currently only RabbitMQ)
+Description:         Messaging client (currently only RabbitMQ)
+License:             GPL-3
 Stability:           alpha
 License-file:        LICENSE
-Author:              Holger Reinhardt, Alexandru Scvortov
+Author:              Alexandru Scvortov
 Category:            Network
 Maintainer:          Alexandru Scvortov <scvalex@gmail.com>
 Build-Type:          Custom
 Homepage:            https://github.com/scvalex/amqpwn
 Cabal-Version:       >=1.6
 
-Extra-source-files:  examples/ExampleConsumer.hs,
-                     examples/ExampleProducer.hs,
-                     Codegen/Codegen.hs,
+Extra-source-files:  Codegen/Codegen.hs,
                      Test/Simple.hs
 
 Data-files:          Codegen/amqp0-9-1.xml,
