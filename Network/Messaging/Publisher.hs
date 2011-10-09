@@ -102,7 +102,8 @@ runPublisher conn pub = do
   (chId, ch) <- openChannel conn
                            (PublishingChannel tid
                                               (ackHandler unconfirmed waiter)
-                                              nackHandler returnHandler)
+                                              (nackHandler unconfirmed waiter)
+                                              returnHandler)
   request' conn ch chId . SimpleMethod $ ConfirmSelect False
   let state = PState { getConnection  = conn
                      , getChannelId   = chId
@@ -115,14 +116,17 @@ runPublisher conn pub = do
         cleanup chId waiter = do
           closeChannel conn chId
           tryPutMVar waiter ()
-        ackHandler unconfirmed waiter (BasicAck tag0 multiple) =
+
+        ackHandler unconfirmed waiter (BasicAck tag multiple) =
+            ackNackHandler unconfirmed waiter (fromIntegral tag) multiple
+        nackHandler unconfirmed waiter (BasicNack tag multiple _) =
+            ackNackHandler unconfirmed waiter (fromIntegral tag) multiple
+        returnHandler (BasicReturn _ _ _ _) = do
+          printf "Received a basic.return; fsck me\n"
+
+        ackNackHandler unconfirmed waiter tag multiple = do
           modifyMVar_ unconfirmed $ \uc -> do
-            let tag = fromIntegral tag0
             let uc' = if multiple then S.filter (<=tag) uc
                                   else S.delete tag uc
             when (S.null uc') $ tryPutMVar waiter () >> return ()
             return uc'
-        nackHandler (BasicNack tag _ _) = do
-          printf "Received a nack for %d\n" tag
-        returnHandler (BasicReturn _ _ _ _) = do
-          printf "Received a basic.return; fsck me\n"
