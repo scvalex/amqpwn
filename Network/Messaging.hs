@@ -18,7 +18,7 @@ module Network.Messaging (
         bindExchange, unbindExchange,
 
         -- * Publishing
-        Publisher, runPublisher, publish,
+        Publisher, runPublisher, publish, waitForConfirms,
 
         -- * Exceptions
         AMQPException(..)

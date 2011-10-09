@@ -126,7 +126,7 @@ tests = test [ "alwaysPass" ~: TestCase $
                      assertFailure "unbound non-existing binding"
              , "justPublish" ~: TestCase $
                  withConnection $ \conn -> do
-                     runPublisher conn $ publish "" "bah" "meh" >> return ()
+                     runPublisher conn $ publish "" "bah" "meh"
                      return ()
              , "justPublish2" ~: TestCase $
                  withConnection $ \conn -> do
@@ -144,13 +144,43 @@ tests = test [ "alwaysPass" ~: TestCase $
                      after 1 . putMVar waiter $
                            assertFailure "succesfully published to \
                                          \non-existing exchange"
-                     runPublisher conn
+                     forkIO $ runPublisher conn
                        (publish "ni" "bah" "meh" >>
                         liftIO (readMVar waiter) >> return ())
-                       `CE.catch` (\(_ :: CE.SomeException) ->
-                                   putMVar waiter (return ()))
+                        `CE.catch` (\(_ :: CE.SomeException) ->
+                                        putMVar waiter (return ()))
                      act <- takeMVar waiter
                      act
+             , "waitForConfirms" ~: TestCase $
+                 withConnection $ \conn -> do
+                   waiter <- newEmptyMVar
+                   after 5 . putMVar waiter $
+                         assertFailure "timed out waiting for confirms"
+                   forkIO $ runPublisher conn
+                     (publish "" "bah" "meh" >>
+                      waitForConfirms >>
+                      liftIO (putMVar waiter (return ())) >>
+                      return ())
+                      `CE.catch` (\(_ :: CE.SomeException) ->
+                                      putMVar waiter (return ()))
+                   act <- takeMVar waiter
+                   act
+             , "waitForConfirms2" ~: TestCase $
+                 withConnection $ \conn -> do
+                   waiter <- newEmptyMVar
+                   after 5 . putMVar waiter $
+                         assertFailure "timed out waiting for confirms"
+                   declareQueue conn "foo"
+                   forkIO $ runPublisher conn
+                     (publish "" "foo" "meh" >>
+                      waitForConfirms >>
+                      liftIO (putMVar waiter (return ())) >>
+                      return ())
+                      `CE.catch` (\(_ :: CE.SomeException) ->
+                                      putMVar waiter (return ()))
+                   deleteQueue conn "foo"
+                   act <- takeMVar waiter
+                   act
              ]
 
 stressTests :: Test

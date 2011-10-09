@@ -18,7 +18,7 @@ module Network.Messaging.AMQP.Connection (
         closeConnection, closeConnectionNormal,
 
         -- * Conection interal RPC, async
-        request, async,
+        request, request', async,
 
         -- * Channels (internal)
         openChannel, closeChannel
@@ -213,22 +213,20 @@ closeConnection :: (Integral n1)
                 -> Connection    -- ^ connection to close
                 -> IO ()
 closeConnection replyCode replyText conn = do
-  -- do nothing if connection is already closed
-  CE.catch doClose $ \ (_ :: CE.IOException) ->
-      return ()
-  -- wait for connection_close_ok by the server; this MVar gets filled
-  -- in the CE.finally handler in openConnection
-  atomically $ readTMVar (getConnClosed conn)
-  return ()
-    where
-      doClose = do
-        withTMVarIO (getSocket conn) $ \sock ->
-            writeFrameSock sock $ Frame 0 $
-                           MethodPayload $ ConnectionClose
-                                             (fromIntegral replyCode)
-                                             (fromString replyText)
-                                             0 -- class_id
-                                             0 -- method_id
+  -- Do nothing if connection is already closed.  Otherwise, wait for
+  -- connection.close_ok by the server; this MVar gets filled in the
+  -- CE.finally handler in openConnection.
+  (doClose >> atomically (readTMVar (getConnClosed conn)) >> return ())
+    `CE.catch` (\(_ :: CE.IOException) -> return ())
+      where
+        doClose = do
+          withTMVarIO (getSocket conn) $ \sock ->
+              writeFrameSock sock $ Frame 0 $
+                             MethodPayload $ ConnectionClose
+                                               (fromIntegral replyCode)
+                                               (fromString replyText)
+                                               0 -- class_id
+                                               0 -- method_id
 
 -- | Add a handler that will be called after the connection is closed
 -- either by calling 'closeConnection' or by an exception.  If the
@@ -297,14 +295,6 @@ connectionReceiver conn sock = do
                 _ ->
                     CE.throw $ ClientException "received nack on \
                                                \non-publishing channel"
-        forwardToChannel chId (MethodPayload p@(BasicReturn _ _ _ _)) = do
-            withChannelFail chId $ \ch -> do
-              case getChannelType ch of
-                (PublishingChannel _ _ _ handler) ->
-                    handler p
-                _ ->
-                    CE.throw $ ClientException "received return on \
-                                               \non-publishing channel"
 
         -- Handle channel.close here
         forwardToChannel chId (MethodPayload (ChannelClose code reason _ _)) = do
@@ -342,8 +332,17 @@ connectionReceiver conn sock = do
                                      writeTVar (getAssembler ch) assembler'
                                      return (Just method)
             case mMethod of
-              Nothing     -> return ()
-              Just method -> atomically $ putTMVar (getChannelRPC ch) method
+              Nothing ->
+                  return ()
+              Just (ContentMethod p@(BasicReturn _ _ _ _) _ _) ->
+                  case getChannelType ch of
+                    (PublishingChannel _ _ _ handler) ->
+                        handler p
+                    _ ->
+                        CE.throw $ ClientException "received return on \
+                                                   \non-publishing channel"
+              Just method ->
+                  atomically $ putTMVar (getChannelRPC ch) method
 
         withChannelFail chId =
             withChannel chId (CE.throw . ClientException $
@@ -438,7 +437,7 @@ closeChannel conn chId = do
 -- | Perform the actual @channel.close@ asynchronously.  I.e. don't
 -- wait for the @channel.close_ok@.
 closeChannel' :: Connection -> ChannelId -> IO ()
-closeChannel' conn chId =
+closeChannel' conn chId = do
     unsafeWriteMethod conn chId (SimpleMethod (ChannelClose 200 (fromString "Ok") 0 0))
 
 -- | Create a new 'Channel' value.

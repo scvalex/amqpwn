@@ -9,9 +9,10 @@ module Network.Messaging.Publisher (
     ) where
 
 import Control.Concurrent ( myThreadId
-                          , MVar, newMVar, tryTakeMVar, modifyMVar_
-                          , readMVar )
+                          , MVar, newMVar, modifyMVar_, readMVar
+                          , tryTakeMVar, tryPutMVar )
 import qualified Control.Exception as CE
+import Control.Monad ( when )
 import Control.Monad.IO.Class ( MonadIO(..) )
 import Control.Monad.State.Lazy ( MonadState(..), StateT(..)
                                 , evalStateT, gets )
@@ -19,7 +20,7 @@ import qualified Data.ByteString.Lazy.Char8 as BL
 import qualified Data.Set as S
 import Data.String ( IsString(..) )
 import Network.Messaging.AMQP.Connection ( openChannel, closeChannel
-                                         , request, async )
+                                         , request', async )
 import Network.Messaging.AMQP.Types ( Connection, ChannelId, ChannelType(..)
                                     , ExchangeName, RoutingKey, MessageId
                                     , Method(..), MethodPayload(..)
@@ -55,10 +56,14 @@ publish x rk content = Publisher $ do
     tryTakeMVar waiter   -- block subsequent waits
     modifyMVar_ unconfirmed $ return . (S.insert msn)
     async conn chId $
-          ContentMethod (BasicPublish 0 (fromString x)
-                                      (fromString rk) True False)
+          ContentMethod (BasicPublish 0               -- reserved
+                                      (fromString x)  -- exchange
+                                      (fromString rk) -- routing key
+                                      True            -- mandatory
+                                      False)          -- immediate
                         (CHBasic Nothing Nothing Nothing (Just 2) Nothing
-                                 Nothing Nothing Nothing Nothing Nothing
+                                 Nothing Nothing Nothing
+                                 (Just . fromString $ show msn) Nothing
                                  Nothing Nothing Nothing Nothing)
                         content
   put $ state { getMsgSeqNo = msn + 1 }
@@ -94,22 +99,30 @@ runPublisher conn pub = do
   tid <- myThreadId
   waiter <- newMVar ()
   unconfirmed <- newMVar S.empty
-  (chId, _) <- openChannel conn (PublishingChannel tid ackHandler
-                                                  nackHandler returnHandler)
-  request conn . SimpleMethod $ ConfirmSelect False
+  (chId, ch) <- openChannel conn
+                           (PublishingChannel tid
+                                              (ackHandler unconfirmed waiter)
+                                              nackHandler returnHandler)
+  request' conn ch chId . SimpleMethod $ ConfirmSelect False
   let state = PState { getConnection  = conn
                      , getChannelId   = chId
                      , getMsgSeqNo    = 1
                      , getWaiter      = waiter
                      , getUnconfirmed = unconfirmed }
   evalStateT (unPublisher pub) state
-    `CE.finally` cleanup chId
+    `CE.finally` cleanup chId waiter
       where
-        cleanup chId = do
+        cleanup chId waiter = do
           closeChannel conn chId
-        ackHandler (BasicAck tag _) = do
-          printf "Received an ack for %d" tag
+          tryPutMVar waiter ()
+        ackHandler unconfirmed waiter (BasicAck tag0 multiple) =
+          modifyMVar_ unconfirmed $ \uc -> do
+            let tag = fromIntegral tag0
+            let uc' = if multiple then S.filter (<=tag) uc
+                                  else S.delete tag uc
+            when (S.null uc') $ tryPutMVar waiter () >> return ()
+            return uc'
         nackHandler (BasicNack tag _ _) = do
-          printf "Received a nack for %d" tag
+          printf "Received a nack for %d\n" tag
         returnHandler (BasicReturn _ _ _ _) = do
-          printf "Received a basic.return; fsck me"
+          printf "Received a basic.return; fsck me\n"
