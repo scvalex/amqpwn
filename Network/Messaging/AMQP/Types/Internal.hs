@@ -1,3 +1,5 @@
+{-# LANGUAGE BangPatterns #-}
+
 module Network.Messaging.AMQP.Types.Internal (
         -- * AMQP low-level types
         Octet, Bit, ShortInt, LongInt, LongLongInt,

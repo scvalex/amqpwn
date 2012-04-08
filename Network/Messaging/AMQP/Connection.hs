@@ -334,10 +334,10 @@ connectionReceiver conn sock = do
             case mMethod of
               Nothing ->
                   return ()
-              Just (ContentMethod p@(BasicReturn _ _ _ _) _ _) ->
+              Just cm@(ContentMethod (BasicReturn _ _ _ _) _ _) ->
                   case getChannelType ch of
                     (PublishingChannel _ _ _ handler) ->
-                        handler p
+                        handler cm
                     _ ->
                         CE.throw $ ClientException "received return on \
                                                    \non-publishing channel"

@@ -62,7 +62,7 @@ data ChannelType = ControlChannel
                  | PublishingChannel { getPublishingThreadId :: ThreadId
                                      , getBasicAckHandler :: MethodHandler
                                      , getBasicNackHandler :: MethodHandler
-                                     , getBasicReturnHandler :: MethodHandler
+                                     , getBasicReturnHandler :: Method -> IO ()
                                      }
 
 -- Convenience types

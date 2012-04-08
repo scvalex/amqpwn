@@ -27,6 +27,8 @@ import Network.Messaging.AMQP.Types ( Connection, ChannelId, ChannelType(..)
                                     , ContentHeaderProperties(..) )
 import Text.Printf ( printf )
 
+data ConfirmStatus = Ack | Nack | Return
+
 data PState = PState { getConnection  :: Connection
                      , getChannelId   :: ChannelId
                      , getMsgSeqNo    :: Int
@@ -100,10 +102,11 @@ runPublisher conn pub = do
   waiter <- newMVar ()
   unconfirmed <- newMVar S.empty
   (chId, ch) <- openChannel conn
-                           (PublishingChannel tid
-                                              (ackHandler unconfirmed waiter)
-                                              (nackHandler unconfirmed waiter)
-                                              returnHandler)
+                           (PublishingChannel
+                              tid
+                              (ackHandler unconfirmed waiter)
+                              (nackHandler unconfirmed waiter)
+                              (returnHandler unconfirmed waiter))
   request' conn ch chId . SimpleMethod $ ConfirmSelect False
   let state = PState { getConnection  = conn
                      , getChannelId   = chId
@@ -117,16 +120,22 @@ runPublisher conn pub = do
           closeChannel conn chId
           tryPutMVar waiter ()
 
-        ackHandler unconfirmed waiter (BasicAck tag multiple) =
-            ackNackHandler unconfirmed waiter (fromIntegral tag) multiple
+        ackHandler unconfirmed waiter (BasicAck tag multiple) = do
+            printf "Handling ack %d\n" tag
+            ackNackHandler unconfirmed waiter (fromIntegral tag) multiple Ack
         nackHandler unconfirmed waiter (BasicNack tag multiple _) =
-            ackNackHandler unconfirmed waiter (fromIntegral tag) multiple
-        returnHandler (BasicReturn _ _ _ _) = do
-          printf "Received a basic.return; fsck me\n"
+            ackNackHandler unconfirmed waiter (fromIntegral tag) multiple Nack
+        returnHandler unconfirmed waiter (ContentMethod (BasicReturn _ _ _ _) props _) = do
+          let (Just msns) = getCHBasicMessageId props
+              msn         = read $ show msns
+          printf "Handling return %d\n" msn
+          ackNackHandler unconfirmed waiter msn False Return
 
-        ackNackHandler unconfirmed waiter tag multiple = do
+        ackNackHandler unconfirmed waiter tag multiple _ = do
+          printf "Handling ack/nack %d\n" tag
           modifyMVar_ unconfirmed $ \uc -> do
             let uc' = if multiple then S.filter (<=tag) uc
                                   else S.delete tag uc
             when (S.null uc') $ tryPutMVar waiter () >> return ()
+            printf "Still unacked: %s\n" (show $ S.toList uc')
             return uc'

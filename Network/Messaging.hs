@@ -1,3 +1,5 @@
+{-# LANGUAGE BangPatterns #-}
+
 module Network.Messaging (
         -- * Connections
         Connection,

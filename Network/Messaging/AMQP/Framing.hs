@@ -39,14 +39,15 @@ $(genContentHeaderProperties domainMap classes)
 
 -- | Get the numeric class id of the given class.
 $(genClassIdFuns classes)
-getClassIdOf :: (Num a) => ContentHeaderProperties -> a
+getClassIdOf :: (Num a, Eq a) => ContentHeaderProperties -> a
 
 -- | The actual identifier and properties for each method.
 $(genMethodPayload domainMap classes)
 
 -- | 'Data.Binary.Get' function for content headers.
 $(genGetContentHeaderProperties classes)
-getContentHeaderProperties :: (Num a) => a -> Get ContentHeaderProperties
+getContentHeaderProperties :: (Num a, Eq a)
+                           => a -> Get ContentHeaderProperties
 
 -- | 'Data.Binary.Put' function for content headers.
 $(genPutContentHeaderProperties classes)

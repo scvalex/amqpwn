@@ -1,3 +1,5 @@
+{-# LANGUAGE BangPatterns #-}
+
 module Codegen.Codegen (
         main, run
     ) where

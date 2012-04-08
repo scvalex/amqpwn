@@ -154,7 +154,7 @@ tests = test [ "alwaysPass" ~: TestCase $
              , "waitForConfirms" ~: TestCase $
                  withConnection $ \conn -> do
                    waiter <- newEmptyMVar
-                   after 5 . putMVar waiter $
+                   after 10 . putMVar waiter $
                          assertFailure "timed out waiting for confirms"
                    forkIO $ runPublisher conn
                      (publish "" "bah" "meh" >>
@@ -168,7 +168,7 @@ tests = test [ "alwaysPass" ~: TestCase $
              , "waitForConfirms2" ~: TestCase $
                  withConnection $ \conn -> do
                    waiter <- newEmptyMVar
-                   after 5 . putMVar waiter $
+                   after 10 . putMVar waiter $
                          assertFailure "timed out waiting for confirms"
                    declareQueue conn "foo"
                    forkIO $ runPublisher conn
